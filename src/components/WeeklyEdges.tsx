@@ -450,6 +450,8 @@ export function WeeklyEdges() {
                       </Link>
                       <Link
                         href={researchUrl("cfb", row.matchedHome, row.matchedAway, row.game.espnId)}
+                        target="_blank"
+                        rel="noopener noreferrer"
                         className="inline-block rounded-md border px-3 py-1.5 text-xs font-medium"
                         style={{ borderColor: "var(--card-border)", color: "var(--text-secondary)" }}
                       >
@@ -495,7 +497,12 @@ export function WeeklyEdges() {
                       {(row.pick.marketImplied * 100).toFixed(0)}% ({formatMoneyline(row.pick.moneyline)}). Not shown
                       as a bet — this gap almost certainly means the model is missing something.
                     </span>
-                    <Link href={researchUrl("cfb", row.matchedHome, row.matchedAway, row.game.espnId)} style={{ color: "var(--series-1)" }}>
+                    <Link
+                      href={researchUrl("cfb", row.matchedHome, row.matchedAway, row.game.espnId)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{ color: "var(--series-1)" }}
+                    >
                       Research →
                     </Link>
                   </div>
@@ -521,7 +528,12 @@ export function WeeklyEdges() {
                       {row.game.awayTeam} at {row.game.homeTeam} — model {(row.pHome * 100).toFixed(0)}% home, priced
                       efficiently at {row.provider}
                     </span>
-                    <Link href={researchUrl("cfb", row.matchedHome, row.matchedAway, row.game.espnId)} style={{ color: "var(--series-1)" }}>
+                    <Link
+                      href={researchUrl("cfb", row.matchedHome, row.matchedAway, row.game.espnId)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{ color: "var(--series-1)" }}
+                    >
                       Research →
                     </Link>
                   </div>
@@ -544,7 +556,12 @@ export function WeeklyEdges() {
                       {row.status === "unmatched" ? "team not found in historical data" : "odds not posted yet"}
                     </span>
                     {row.status === "no-odds" && (
-                      <Link href={researchUrl("cfb", row.matchedHome, row.matchedAway, row.game.espnId)} style={{ color: "var(--series-1)" }}>
+                      <Link
+                        href={researchUrl("cfb", row.matchedHome, row.matchedAway, row.game.espnId)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{ color: "var(--series-1)" }}
+                      >
                         Research →
                       </Link>
                     )}
@@ -622,6 +639,8 @@ export function WeeklyEdges() {
                     {row.status === "no-odds" && <span style={{ color: "var(--text-muted)" }}>no odds available</span>}
                     <Link
                       href={researchUrl("cfb", row.record.homeTeam, row.record.awayTeam, row.record.gameId)}
+                      target="_blank"
+                      rel="noopener noreferrer"
                       style={{ color: "var(--series-1)" }}
                     >
                       Research →

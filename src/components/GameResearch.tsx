@@ -71,10 +71,14 @@ export function GameResearch() {
   }, [espnId]);
   const odds = oddsResult?.espnId === espnId ? oddsResult.odds : null;
 
-  const loading = fetchResult.dataset !== dataset;
+  // fetchResult's initial `dataset` value matches the default dataset, so a
+  // plain `fetchResult.dataset !== dataset` check reads false before the
+  // very first fetch has even resolved — also require games/error to be
+  // populated, or this briefly renders "team not found" instead of loading.
   const games = fetchResult.dataset === dataset ? fetchResult.games : null;
   const teamStats = fetchResult.dataset === dataset ? fetchResult.teamStats : null;
   const error = fetchResult.dataset === dataset ? fetchResult.error : null;
+  const loading = fetchResult.dataset !== dataset || (games === null && error === null);
 
   const analysis = useMemo(() => {
     if (!games || !home || !away) return null;

@@ -62,10 +62,13 @@ export function ProbabilityModel() {
     };
   }, [dataset]);
 
-  const loading = fetchResult.dataset !== dataset;
+  // fetchResult's initial `dataset` matches the default dataset, so a plain
+  // `fetchResult.dataset !== dataset` check reads false before the very
+  // first fetch has resolved — also require games/error to be populated.
   const games = fetchResult.dataset === dataset ? fetchResult.games : null;
   const teamStats = fetchResult.dataset === dataset ? fetchResult.teamStats : null;
   const error = fetchResult.dataset === dataset ? fetchResult.error : null;
+  const loading = fetchResult.dataset !== dataset || (games === null && error === null);
 
   const eloOptions: EloOptions = useMemo(
     () => ({ kFactor, initialRating: 1500, homeAdvantage, seasonRegression: seasonRegressionPercent / 100 }),
