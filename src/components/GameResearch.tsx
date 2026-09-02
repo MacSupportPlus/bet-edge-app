@@ -376,14 +376,19 @@ export function GameResearch() {
               { team: away, recent: analysis.recentAway },
             ].map(({ team, recent }) => (
               <div key={team} className="rounded-lg border p-4" style={{ background: "var(--card-bg)", borderColor: "var(--card-border)" }}>
-                <h2 className="mb-2 text-sm font-medium" style={{ color: "var(--text-primary)" }}>
+                <h2 className="mb-1 text-sm font-medium" style={{ color: "var(--text-primary)" }}>
                   {team} — recent form
                 </h2>
+                <p className="mb-2 text-xs" style={{ color: "var(--text-muted)" }}>
+                  The number after each opponent is <em>their</em> Elo rating going into that game —
+                  a win over a 1650-rated team says a lot more than a win over a 1350 one, and
+                  that&apos;s already what moved this team&apos;s own rating, not just the final score.
+                </p>
                 <div className="flex flex-col gap-1 text-xs">
                   {recent.map((g, i) => (
                     <div key={i} className="flex items-center justify-between gap-2" style={{ color: "var(--text-secondary)" }}>
                       <span>
-                        {fmtDate(g.date)} {g.isHome ? "vs" : "at"} {g.opponent}
+                        {fmtDate(g.date)} {g.isHome ? "vs" : "at"} {g.opponent} ({g.opponentRatingBefore.toFixed(0)})
                       </span>
                       <span
                         className="font-medium"
@@ -394,6 +399,11 @@ export function GameResearch() {
                     </div>
                   ))}
                   {recent.length === 0 && <span style={{ color: "var(--text-muted)" }}>No games in the dataset yet.</span>}
+                  {recent.length > 0 && (
+                    <div className="mt-1 pt-1" style={{ color: "var(--text-muted)", borderTop: "1px solid var(--card-border)" }}>
+                      Avg. opponent rating (these {recent.length}): {(recent.reduce((s, g) => s + g.opponentRatingBefore, 0) / recent.length).toFixed(0)}
+                    </div>
+                  )}
                 </div>
               </div>
             ))}
@@ -434,14 +444,31 @@ export function GameResearch() {
                 offensive efficiency (EPA), one point per game played.
               </p>
               {[
-                { label: "Total yards", key: "totalYards" as const },
-                { label: "Turnover margin", key: "turnoverMargin" as const, baseline: 0 },
-                { label: "Offensive EPA", key: "offEpa" as const, baseline: 0 },
-              ].map(({ label, key, baseline }) => (
+                {
+                  label: "Total yards",
+                  key: "totalYards" as const,
+                  description: "Yards gained that game, offense + special teams. The raw measure of output — higher is generally better, but it doesn't capture efficiency: a team can pile up yards without scoring.",
+                },
+                {
+                  label: "Turnover margin",
+                  key: "turnoverMargin" as const,
+                  baseline: 0,
+                  description: "Takeaways minus giveaways. Positive (above the dashed line) means they gained the ball more than they lost it — one of the strongest single predictors of winning, since turnovers hand the opponent free scoring chances.",
+                },
+                {
+                  label: "Offensive EPA",
+                  key: "offEpa" as const,
+                  baseline: 0,
+                  description: "Expected Points Added per play, summed across the game. Unlike total yards, EPA credits a play for how much it actually helped — a 5-yard gain on 3rd-and-3 counts far more than the same 5 yards on 3rd-and-15. Positive (above the dashed line) means the offense added value on average; negative means it lost value relative to what an average play would do in that situation.",
+                },
+              ].map(({ label, key, baseline, description }) => (
                 <div key={key} className="mb-4 last:mb-0">
                   <div className="mb-1 text-xs font-medium" style={{ color: "var(--text-secondary)" }}>
                     {label}
                   </div>
+                  <p className="mb-1.5 text-xs" style={{ color: "var(--text-muted)" }}>
+                    {description}
+                  </p>
                   <LineChart
                     ariaLabel={`${label} trend for both teams`}
                     baseline={baseline}

@@ -646,8 +646,11 @@ export function Guide() {
           </Field>
           <Field term="Recent form &amp; head-to-head">
             Plain game logs: who each team just played, what happened, and every prior meeting
-            between these two teams in the dataset. The same information a human handicapper would
-            start from.
+            between these two teams in the dataset. The number next to each opponent&apos;s name is
+            <em> their</em> Elo rating going into that game — a win over a 1650-rated team says a
+            lot more than a win over a 1350 one, and Elo already accounts for that when it updates
+            a team&apos;s own rating; this just makes that strength-of-schedule effect visible
+            instead of only baked invisibly into the final number.
           </Field>
           <Field term="Team stat trends (NFL only)">
             Total yards, turnover margin, and offensive efficiency, one point per game — the same

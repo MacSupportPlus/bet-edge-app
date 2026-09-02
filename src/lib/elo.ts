@@ -77,6 +77,8 @@ export interface EloHistoryPoint {
   result: "W" | "L" | "T";
   /** This team's rating AFTER this game (post-game, includes the K-factor update). */
   ratingAfter: number;
+  /** The opponent's rating BEFORE this game — strength of schedule, made visible instead of only baked into the number. */
+  opponentRatingBefore: number;
 }
 
 export interface EloRun {
@@ -161,6 +163,7 @@ export function runElo(games: Game[], options: EloOptions = DEFAULT_ELO_OPTIONS)
       pointsAgainst: game.awayScore,
       result,
       ratingAfter: homeRatingAfter,
+      opponentRatingBefore: awayEloPre,
     });
     pushHistory(game.awayTeam, {
       gameId: game.gameId,
@@ -170,6 +173,7 @@ export function runElo(games: Game[], options: EloOptions = DEFAULT_ELO_OPTIONS)
       isHome: false,
       pointsFor: game.awayScore,
       pointsAgainst: game.homeScore,
+      opponentRatingBefore: homeEloPre,
       result: result === "W" ? "L" : result === "L" ? "W" : "T",
       ratingAfter: awayRatingAfter,
     });

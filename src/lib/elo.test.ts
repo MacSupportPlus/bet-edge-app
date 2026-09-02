@@ -147,6 +147,24 @@ describe("ratingHistory", () => {
     const aFirstGameRatingAfter = ratingHistory.get("A")![0].ratingAfter;
     expect(records[1].homeEloPre).toBeCloseTo(aFirstGameRatingAfter, 6);
   });
+
+  it("records the opponent's PREGAME rating (strength of schedule), not their post-game rating", () => {
+    const games: Game[] = [
+      // B has already played once (and won big), so it enters game 2 above initial rating.
+      game({ date: "2024-01-01", homeTeam: "B", awayTeam: "X", homeScore: 40, awayScore: 0, neutral: true }),
+      game({ date: "2024-01-08", homeTeam: "A", awayTeam: "B", neutral: true }),
+    ];
+    const { ratingHistory, records } = runElo(games, DEFAULT_ELO_OPTIONS);
+    const bPregameForSecondGame = records[1].awayEloPre;
+    const aPoint = ratingHistory.get("A")!.find((p) => p.opponent === "B")!;
+    const bPoint = ratingHistory.get("B")!.find((p) => p.opponent === "A")!;
+    // A's record of playing B should show B's rating BEFORE that game (1510, from beating X)...
+    expect(aPoint.opponentRatingBefore).toBeCloseTo(bPregameForSecondGame, 6);
+    // ...not B's rating AFTER this same game against A (B lost, so this differs) — that would leak the outcome.
+    expect(aPoint.opponentRatingBefore).not.toBeCloseTo(bPoint.ratingAfter, 6);
+    // From B's own perspective, its opponent (A) was brand new (initial rating).
+    expect(bPoint.opponentRatingBefore).toBe(DEFAULT_ELO_OPTIONS.initialRating);
+  });
 });
 
 describe("seasonRegression", () => {
