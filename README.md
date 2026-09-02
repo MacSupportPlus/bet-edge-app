@@ -39,8 +39,8 @@ some growth rate for protection against a wrong `p`.
 | Phase | What | Status |
 |---|---|---|
 | 1 | Edge calculator: expectancy, volatility, Kelly fraction, growth-rate curve | ✅ Done |
-| 2 | Monte Carlo risk-of-ruin simulator (ensemble average vs. median/geometric path) | 🔜 Next |
-| 3 | Bankroll tracker: log real bets, track realized vs. theoretical growth, drawdown | Planned |
+| 2 | Monte Carlo risk-of-ruin simulator (ensemble average vs. median/geometric path) | ✅ Done |
+| 3 | Bankroll tracker: log real bets, track realized vs. theoretical growth, drawdown | 🔜 Next |
 | 4 | Probability estimation model (calibrated `p`, Brier score, backtesting) | Stretch |
 | 5 | Portfolio Kelly for correlated concurrent bets | Stretch |
 
@@ -65,6 +65,35 @@ The formulas live in [`src/lib/edge.ts`](src/lib/edge.ts) as pure, dependency-fr
 functions, unit-tested in [`src/lib/edge.test.ts`](src/lib/edge.test.ts) against known
 values (the textbook 55%-edge coin-flip example: `E = 0.10`, `f* = 10%`,
 growth rate ≈ 0.501%/bet at full Kelly).
+
+### Phase 2 — Risk-of-ruin simulator
+
+Simulates `N` independent bettors each making `M` sequential bets under a
+chosen sizing rule — either **proportional** (stake resizes with current
+bankroll, e.g. Kelly-style) or **flat** (stake stays fixed in dollar terms,
+sized as a fraction of the *starting* bankroll). This is a real simulation,
+not the closed-form ruin formula, because the closed-form version assumes a
+fixed bet size in bankroll units — real bettors re-size every bet.
+
+For each rule it reports:
+
+- the **ruin rate** — % of simulated bettors whose bankroll ever dropped to
+  ≤1% of their starting bankroll,
+- the **ensemble average** bankroll path over time, and
+- the **median** (typical single-path) bankroll over time,
+
+plotted together on a log-scale fan chart alongside a sample of individual
+paths. The average and median visibly diverge — on the default 55%-edge,
+½-Kelly scenario, the ensemble average overstates the typical bettor's
+outcome by roughly 1.4–1.5×. A side-by-side comparison (Full Kelly / ½ Kelly
+/ flat betting / 2× Kelly) shows over-betting sharply increasing ruin risk
+(2× Kelly runs ~20% ruin vs. ~0% for ½ Kelly in the same scenario).
+
+The simulation engine lives in [`src/lib/simulate.ts`](src/lib/simulate.ts) (a
+seeded, reproducible PRNG plus pure simulate functions), unit-tested in
+[`src/lib/simulate.test.ts`](src/lib/simulate.test.ts) — including a direct test that
+the ensemble mean exceeds the median (the "average is a lie" effect) and that
+2× Kelly ruins more often than full Kelly.
 
 ## Tech stack
 
