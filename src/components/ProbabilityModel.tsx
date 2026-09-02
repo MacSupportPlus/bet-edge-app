@@ -7,6 +7,7 @@ import { compactCurrency } from "@/lib/format";
 import { loadGames } from "@/lib/loadGames";
 import { predictProba, trainLogisticRegression } from "@/lib/logisticRegression";
 import { BacktestStrategy, runBacktest } from "@/lib/backtest";
+import { computeTeamStatDiffs, loadTeamStats, NEUTRAL_TEAM_STAT_FEATURES, TeamGameStat } from "@/lib/teamStats";
 import { BacktestChart } from "./BacktestChart";
 import { ReliabilityChart } from "./ReliabilityChart";
 import { StatTile } from "./StatTile";
@@ -28,9 +29,15 @@ export function ProbabilityModel() {
   // Keyed by which dataset it resolved for, so `loading`/`error`/`games` can
   // be derived by comparing against the currently selected `dataset` rather
   // than tracked as separate state written synchronously in the effect body.
-  const [fetchResult, setFetchResult] = useState<{ dataset: Dataset; games: Game[] | null; error: string | null }>({
+  const [fetchResult, setFetchResult] = useState<{
+    dataset: Dataset;
+    games: Game[] | null;
+    teamStats: TeamGameStat[] | null;
+    error: string | null;
+  }>({
     dataset: "nfl",
     games: null,
+    teamStats: null,
     error: null,
   });
 
@@ -40,12 +47,14 @@ export function ProbabilityModel() {
 
   useEffect(() => {
     let cancelled = false;
-    loadGames(dataset)
-      .then((g) => {
-        if (!cancelled) setFetchResult({ dataset, games: g, error: null });
+    // Team box-score stats only exist for NFL — nflverse publishes a weekly
+    // per-team archive; CFB has no equivalent without parsing raw play-by-play.
+    Promise.all([loadGames(dataset), dataset === "nfl" ? loadTeamStats() : Promise.resolve(null)])
+      .then(([g, ts]) => {
+        if (!cancelled) setFetchResult({ dataset, games: g, teamStats: ts, error: null });
       })
       .catch((e) => {
-        if (!cancelled) setFetchResult({ dataset, games: null, error: String(e) });
+        if (!cancelled) setFetchResult({ dataset, games: null, teamStats: null, error: String(e) });
       });
     return () => {
       cancelled = true;
@@ -54,6 +63,7 @@ export function ProbabilityModel() {
 
   const loading = fetchResult.dataset !== dataset;
   const games = fetchResult.dataset === dataset ? fetchResult.games : null;
+  const teamStats = fetchResult.dataset === dataset ? fetchResult.teamStats : null;
   const error = fetchResult.dataset === dataset ? fetchResult.error : null;
 
   const eloOptions: EloOptions = useMemo(
@@ -69,13 +79,27 @@ export function ProbabilityModel() {
     const test = records.slice(splitIndex);
     if (train.length < 10 || test.length < 10) return null;
 
+    // Team box-score stats (yards, turnover margin, offensive EPA) as extra
+    // pregame features, season-to-date and walk-forward — same no-leakage
+    // discipline as Elo. NFL only; CFB has no per-game stats archive, so
+    // `statDiffs` stays empty and every game falls back to neutral (0) below.
+    const statDiffs = teamStats ? computeTeamStatDiffs(games, teamStats) : new Map();
+    const hasTeamStats = statDiffs.size > 0;
+    const statFeaturesFor = (r: { gameId?: string }) => (r.gameId && statDiffs.get(r.gameId)) || NEUTRAL_TEAM_STAT_FEATURES;
+    const featuresFor = (r: (typeof records)[number]) => {
+      const base = [r.eloDiff];
+      if (!hasTeamStats) return base;
+      const f = statFeaturesFor(r);
+      return [...base, f.totalYardsDiff, f.turnoverMarginDiff, f.offEpaDiff];
+    };
+
     const model = trainLogisticRegression(
-      train.map((r) => [r.eloDiff]),
+      train.map(featuresFor),
       train.map((r) => r.homeWin),
       { iterations: 300, learningRate: 0.5 },
     );
 
-    const testPredictions = test.map((r) => predictProba(model, [r.eloDiff]));
+    const testPredictions = test.map((r) => predictProba(model, featuresFor(r)));
     const testOutcomes = test.map((r) => r.homeWin);
     const brier = brierScore(testPredictions, testOutcomes);
 
@@ -84,6 +108,20 @@ export function ProbabilityModel() {
       testOutcomes.map(() => trainHomeWinRate),
       testOutcomes,
     );
+
+    // Elo-only baseline, trained and evaluated the same way — isolates
+    // exactly how much the added team stats move the Brier score, instead
+    // of just asserting they help.
+    let eloOnlyBrier: number | null = null;
+    if (hasTeamStats) {
+      const eloOnlyModel = trainLogisticRegression(
+        train.map((r) => [r.eloDiff]),
+        train.map((r) => r.homeWin),
+        { iterations: 300, learningRate: 0.5 },
+      );
+      const eloOnlyPredictions = test.map((r) => predictProba(eloOnlyModel, [r.eloDiff]));
+      eloOnlyBrier = brierScore(eloOnlyPredictions, testOutcomes);
+    }
 
     const bins = reliabilityBins(testPredictions, testOutcomes, 10);
 
@@ -99,8 +137,11 @@ export function ProbabilityModel() {
     });
 
     // Illustrative sensitivity: how much does +200 Elo points move predicted p?
-    const pAtEven = predictProba(model, [0]);
-    const pAt200 = predictProba(model, [200]);
+    // Team-stat features held at neutral (0 = "no information yet") so this
+    // isolates Elo's effect alone.
+    const illustrativeFeatures = (eloDiff: number) => (hasTeamStats ? [eloDiff, 0, 0, 0] : [eloDiff]);
+    const pAtEven = predictProba(model, illustrativeFeatures(0));
+    const pAt200 = predictProba(model, illustrativeFeatures(200));
 
     return {
       trainCount: train.length,
@@ -109,12 +150,14 @@ export function ProbabilityModel() {
       testDateRange: [test[0].date, test[test.length - 1].date] as const,
       brier,
       naiveBrier,
+      hasTeamStats,
+      eloOnlyBrier,
       bins,
       backtests,
       pAtEven,
       pAt200,
     };
-  }, [games, eloOptions, startingBankroll]);
+  }, [games, teamStats, eloOptions, startingBankroll]);
 
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-6 py-10">
@@ -217,7 +260,7 @@ export function ProbabilityModel() {
             favorite grows to {(analysis.pAt200 * 100).toFixed(0)}% with a +200 Elo edge.
           </p>
 
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-2">
+          <div className={`grid grid-cols-2 gap-3 ${analysis.hasTeamStats ? "sm:grid-cols-3" : "sm:grid-cols-2"}`}>
             <StatTile label="Brier score (test set)" value={analysis.brier.toFixed(4)} sub="lower is better; 0 = perfect" />
             <StatTile
               label="vs. naive baseline"
@@ -225,7 +268,31 @@ export function ProbabilityModel() {
               sub={`naive (constant p): ${analysis.naiveBrier.toFixed(4)}`}
               accent={analysis.brier < analysis.naiveBrier ? "good" : "critical"}
             />
+            {analysis.hasTeamStats && analysis.eloOnlyBrier !== null && (
+              <StatTile
+                label="vs. Elo-only"
+                value={analysis.brier < analysis.eloOnlyBrier ? "better" : "worse"}
+                sub={`Elo-only Brier: ${analysis.eloOnlyBrier.toFixed(4)}`}
+                accent={analysis.brier < analysis.eloOnlyBrier ? "good" : "critical"}
+              />
+            )}
           </div>
+
+          {analysis.hasTeamStats && (
+            <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+              <strong style={{ color: "var(--text-secondary)" }}>What&apos;s new:</strong> alongside
+              Elo, this model now also looks at each team&apos;s season-to-date{" "}
+              <strong style={{ color: "var(--text-secondary)" }}>total yards</strong>,{" "}
+              <strong style={{ color: "var(--text-secondary)" }}>turnover margin</strong>, and{" "}
+              <strong style={{ color: "var(--text-secondary)" }}>offensive efficiency (EPA)</strong> —
+              only games already played before the one being predicted, so nothing leaks from the
+              future. The &quot;vs. Elo-only&quot; tile above trains the exact same model without
+              those extra stats and compares it head-to-head, so you can see whether they&apos;re
+              actually earning their keep, not just assumed to help. This is NFL-only — college
+              football has no equivalent public archive of per-game team stats going back years, so
+              its model still runs on Elo alone.
+            </p>
+          )}
 
           <div className="rounded-lg border p-4" style={{ background: "var(--card-bg)", borderColor: "var(--card-border)" }}>
             <h2 className="mb-2 text-sm font-medium" style={{ color: "var(--text-primary)" }}>

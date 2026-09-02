@@ -325,6 +325,14 @@ export function Guide() {
             that free money was found — so these are shown as a limitation to understand, never
             as a bet to place.
           </Field>
+          <Field term="Season so far">
+            Each card also shows both teams&apos; current-season points/game, yards/game, and
+            turnover margin, pulled live from ESPN — just for your own read on the matchup. This
+            is informational only: college football doesn&apos;t have a public archive of these
+            stats going back years the way the NFL does, so unlike Elo, it isn&apos;t something
+            the model has learned from and isn&apos;t part of how the pick or stake gets
+            calculated.
+          </Field>
         </dl>
 
         <Callout kind="warning">
@@ -523,6 +531,14 @@ export function Guide() {
           <Field term="Elo K-factor / home advantage">
             Tuning knobs for the underlying team-strength ratings. Higher K-factor makes ratings
             react faster to recent results; you can usually leave these at their defaults.
+          </Field>
+          <Field term="&quot;vs. Elo-only&quot; (NFL only)">
+            On NFL, the model also factors in each team&apos;s season-to-date total yards,
+            turnover margin, and offensive efficiency — using only games already played before the
+            one being predicted, never a peek ahead. This tile trains the same model with those
+            extra stats turned off and compares the two head-to-head, so you can see the real
+            effect instead of just trusting it helps. College football doesn&apos;t have a public
+            per-game stats archive like this, so its model still runs on Elo alone.
           </Field>
           <Field term="Brier score">
             The model&apos;s calibration grade — lower is better, 0 is perfect. What matters more

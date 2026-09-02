@@ -8,6 +8,8 @@
  */
 
 export interface Game {
+  /** nflverse's per-game id (e.g. "2024_01_KC_BAL"). Undefined for CFB, which has no per-game stats archive to join against. */
+  gameId?: string;
   date: string; // ISO yyyy-mm-dd
   season: number;
   homeTeam: string;
@@ -31,6 +33,7 @@ export const DEFAULT_ELO_OPTIONS: EloOptions = {
 };
 
 export interface EloGameRecord {
+  gameId?: string;
   date: string;
   season: number;
   homeTeam: string;
@@ -77,6 +80,7 @@ export function runElo(games: Game[], options: EloOptions = DEFAULT_ELO_OPTIONS)
     if (game.homeScore !== game.awayScore) {
       const homeWin: 0 | 1 = game.homeScore > game.awayScore ? 1 : 0;
       records.push({
+        gameId: game.gameId,
         date: game.date,
         season: game.season,
         homeTeam: game.homeTeam,

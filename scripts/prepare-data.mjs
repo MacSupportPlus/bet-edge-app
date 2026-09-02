@@ -80,8 +80,13 @@ function isNum(v) {
   return v !== undefined && v !== null && v !== "" && v !== "NA" && !Number.isNaN(Number(v));
 }
 
-/** Compact schema: [date, season, homeTeam, awayTeam, homeScore, awayScore, neutral] */
-const SCHEMA = ["date", "season", "homeTeam", "awayTeam", "homeScore", "awayScore", "neutral"];
+/**
+ * Compact schema: [gameId, date, season, homeTeam, awayTeam, homeScore, awayScore, neutral]
+ * gameId is nflverse's own id (e.g. "2024_01_KC_BAL") for NFL, joining to
+ * nfl-team-stats.json; CFB has no equivalent per-game stats archive, so it's
+ * always null there.
+ */
+const SCHEMA = ["gameId", "date", "season", "homeTeam", "awayTeam", "homeScore", "awayScore", "neutral"];
 
 async function prepareNfl() {
   console.log("Fetching NFL games...");
@@ -89,6 +94,7 @@ async function prepareNfl() {
   const games = rows
     .filter((r) => isNum(r.home_score) && isNum(r.away_score) && r.gameday)
     .map((r) => [
+      r.game_id,
       r.gameday,
       Number(r.season),
       r.home_team,
@@ -97,7 +103,7 @@ async function prepareNfl() {
       Number(r.away_score),
       r.location === "Neutral",
     ])
-    .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+    .sort((a, b) => (a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0));
   console.log(`  ${games.length} completed games`);
   return { schema: SCHEMA, games };
 }
@@ -111,6 +117,7 @@ async function prepareCfb() {
   const games = rows
     .filter((r) => isNum(r.home_points) && isNum(r.away_points) && r.start_date)
     .map((r) => [
+      null,
       r.start_date.slice(0, 10),
       Number(r.season),
       r.home_team,
@@ -119,9 +126,44 @@ async function prepareCfb() {
       Number(r.away_points),
       r.neutral_site === "TRUE",
     ])
-    .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+    .sort((a, b) => (a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0));
   console.log(`  ${games.length} completed games`);
   return { schema: SCHEMA, games };
+}
+
+/**
+ * Per-team-per-game box score stats (NFL only — nflverse publishes a weekly
+ * team-stats file per season; college football has no equivalent bulk
+ * archive without parsing full play-by-play, so CFB skips this entirely).
+ * Compact schema: [gameId, team, totalYards, turnoverMargin, offEpa]
+ */
+const TEAM_STAT_SCHEMA = ["gameId", "team", "totalYards", "turnoverMargin", "offEpa"];
+
+async function prepareNflTeamStats(seasons) {
+  console.log("Fetching NFL weekly team stats...");
+  const rows = [];
+  for (const season of seasons) {
+    const url = `https://github.com/nflverse/nflverse-data/releases/download/stats_team/stats_team_week_${season}.csv`;
+    let objs;
+    try {
+      objs = await fetchCsv(url);
+    } catch {
+      console.log(`  skipping ${season} (not published yet)`);
+      continue;
+    }
+    const num = (v) => (isNum(v) ? Number(v) : 0);
+    for (const r of objs) {
+      if (!r.game_id || !r.team) continue;
+      const totalYards = num(r.passing_yards) + num(r.rushing_yards);
+      const turnoversLost =
+        num(r.passing_interceptions) + num(r.rushing_fumbles_lost) + num(r.receiving_fumbles_lost) + num(r.sack_fumbles_lost);
+      const takeaways = num(r.def_interceptions) + num(r.fumble_recovery_opp);
+      const offEpa = num(r.passing_epa) + num(r.rushing_epa);
+      rows.push([r.game_id, r.team, totalYards, takeaways - turnoversLost, Number(offEpa.toFixed(3))]);
+    }
+  }
+  console.log(`  ${rows.length} team-game stat rows`);
+  return { schema: TEAM_STAT_SCHEMA, rows };
 }
 
 async function main() {
@@ -130,6 +172,11 @@ async function main() {
   const nfl = await prepareNfl();
   await writeFile(path.join(OUT_DIR, "nfl-games.json"), JSON.stringify(nfl));
   console.log(`Wrote public/data/nfl-games.json`);
+
+  const nflSeasons = [...new Set(nfl.games.map((g) => g[2]))].sort((a, b) => a - b);
+  const nflTeamStats = await prepareNflTeamStats(nflSeasons);
+  await writeFile(path.join(OUT_DIR, "nfl-team-stats.json"), JSON.stringify(nflTeamStats));
+  console.log(`Wrote public/data/nfl-team-stats.json`);
 
   const cfb = await prepareCfb();
   await writeFile(path.join(OUT_DIR, "cfb-games.json"), JSON.stringify(cfb));

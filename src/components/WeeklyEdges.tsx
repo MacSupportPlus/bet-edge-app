@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { BetEntry, summarizeBankroll } from "@/lib/bankroll";
 import { DEFAULT_ELO_OPTIONS, Game, runElo } from "@/lib/elo";
-import { fetchOddsForGames, fetchUpcomingCfbGames, GameOdds, UpcomingGame } from "@/lib/espn";
+import { fetchOddsForGames, fetchTeamStatsForIds, fetchUpcomingCfbGames, GameOdds, TeamSeasonStats, UpcomingGame } from "@/lib/espn";
 import { currency } from "@/lib/format";
 import { loadGames } from "@/lib/loadGames";
 import { predictProba, trainLogisticRegression } from "@/lib/logisticRegression";
@@ -25,6 +25,7 @@ interface Snapshot {
   historicalGames: Game[];
   upcomingGames: UpcomingGame[];
   oddsByEspnId: Map<string, GameOdds | null>;
+  teamStatsByTeamId: Map<string, TeamSeasonStats | null>;
   error: string | null;
 }
 
@@ -53,6 +54,16 @@ function formatMoneyline(ml: number): string {
   return ml > 0 ? `+${ml}` : `${ml}`;
 }
 
+/** Compact "33.4 ppg · 422.6 ypg · +4 TO" summary, or null if ESPN had nothing usable for this team. */
+function formatTeamStatsLine(stats: TeamSeasonStats | null | undefined): string | null {
+  if (!stats) return null;
+  const parts: string[] = [];
+  if (stats.pointsPerGame !== null) parts.push(`${stats.pointsPerGame.toFixed(1)} ppg`);
+  if (stats.yardsPerGame !== null) parts.push(`${stats.yardsPerGame.toFixed(0)} ypg`);
+  if (stats.turnoverMargin !== null) parts.push(`${stats.turnoverMargin >= 0 ? "+" : ""}${stats.turnoverMargin.toFixed(0)} TO`);
+  return parts.length > 0 ? parts.join(" · ") : null;
+}
+
 export function WeeklyEdges() {
   const [requestId, setRequestId] = useState(0);
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
@@ -74,13 +85,24 @@ export function WeeklyEdges() {
           loadGames("cfb"),
           fetchUpcomingCfbGames(8),
         ]);
-        const oddsByEspnId = await fetchOddsForGames(upcomingGames.map((g) => g.espnId));
+        const teamIds = upcomingGames.flatMap((g) => [g.homeTeamId, g.awayTeamId]).filter((id): id is string => id !== null);
+        const [oddsByEspnId, teamStatsByTeamId] = await Promise.all([
+          fetchOddsForGames(upcomingGames.map((g) => g.espnId)),
+          fetchTeamStatsForIds(teamIds),
+        ]);
         if (!cancelled) {
-          setSnapshot({ requestId, historicalGames, upcomingGames, oddsByEspnId, error: null });
+          setSnapshot({ requestId, historicalGames, upcomingGames, oddsByEspnId, teamStatsByTeamId, error: null });
         }
       } catch (e) {
         if (!cancelled) {
-          setSnapshot({ requestId, historicalGames: [], upcomingGames: [], oddsByEspnId: new Map(), error: String(e) });
+          setSnapshot({
+            requestId,
+            historicalGames: [],
+            upcomingGames: [],
+            oddsByEspnId: new Map(),
+            teamStatsByTeamId: new Map(),
+            error: String(e),
+          });
         }
       }
     })();
@@ -242,6 +264,8 @@ export function WeeklyEdges() {
                   b: row.pick.b.toFixed(4),
                   stake: row.stake.toFixed(0),
                 }).toString();
+                const homeStatsLine = formatTeamStatsLine(snapshot?.teamStatsByTeamId.get(row.game.homeTeamId ?? ""));
+                const awayStatsLine = formatTeamStatsLine(snapshot?.teamStatsByTeamId.get(row.game.awayTeamId ?? ""));
                 return (
                   <div
                     key={row.game.espnId}
@@ -256,6 +280,13 @@ export function WeeklyEdges() {
                         <div className="text-xs" style={{ color: "var(--text-muted)" }}>
                           {formatKickoff(row.game.date)} · odds via {row.provider}
                         </div>
+                        {(homeStatsLine || awayStatsLine) && (
+                          <div className="mt-1 text-xs" style={{ color: "var(--text-muted)" }}>
+                            <strong style={{ color: "var(--text-secondary)" }}>Season so far:</strong>{" "}
+                            {row.game.awayTeam} {awayStatsLine ?? "no stats yet"} · {row.game.homeTeam}{" "}
+                            {homeStatsLine ?? "no stats yet"}
+                          </div>
+                        )}
                       </div>
                       <span
                         className="rounded-full px-3 py-1 text-xs font-semibold text-white"
@@ -341,7 +372,11 @@ export function WeeklyEdges() {
         This reuses the same simplified Elo/logistic model from the Probability Model tab — no
         injuries, weather, or roster changes factored in. Odds come from one sportsbook via
         ESPN&apos;s public (unofficial) API, which can change or go down without notice. Treat
-        every row here as a starting point to sanity-check, not a guarantee.
+        every row here as a starting point to sanity-check, not a guarantee. The &quot;Season so
+        far&quot; line under each matchup (points/game, yards/game, turnover margin) is
+        informational context pulled live from ESPN — it is <em>not</em> fed into the model or the
+        pick, since there&apos;s no historical archive of these stats for college football to train
+        on the way there is for the NFL on the Probability Model tab.
       </p>
     </div>
   );

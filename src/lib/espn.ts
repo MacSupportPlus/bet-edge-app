@@ -12,7 +12,15 @@ export interface UpcomingGame {
   date: string; // ISO datetime
   homeTeam: string; // ESPN's "location" field, e.g. "Ohio State"
   awayTeam: string;
+  homeTeamId: string | null;
+  awayTeamId: string | null;
   neutralSite: boolean;
+}
+
+export interface TeamSeasonStats {
+  pointsPerGame: number | null;
+  yardsPerGame: number | null;
+  turnoverMargin: number | null;
 }
 
 export interface GameOdds {
@@ -43,7 +51,7 @@ export function toEspnDate(d: Date): string {
 
 interface EspnCompetitor {
   homeAway: string;
-  team?: { location?: string };
+  team?: { id?: string; location?: string };
 }
 
 interface EspnScoreboardEvent {
@@ -64,6 +72,8 @@ export function parseScoreboardEvent(event: unknown): UpcomingGame | null {
     date: e.date,
     homeTeam: home.team.location,
     awayTeam: away.team.location,
+    homeTeamId: home.team.id ?? null,
+    awayTeamId: away.team.id ?? null,
     neutralSite: Boolean(comp?.neutralSite),
   };
 }
@@ -95,6 +105,69 @@ export function parseOddsSummary(summary: unknown): GameOdds | null {
 
 const SCOREBOARD_URL = "https://site.api.espn.com/apis/site/v2/sports/football/college-football/scoreboard";
 const SUMMARY_URL = "https://site.api.espn.com/apis/site/v2/sports/football/college-football/summary";
+const TEAM_STATS_URL = "https://site.api.espn.com/apis/site/v2/sports/football/college-football/teams";
+
+interface EspnStatEntry {
+  name?: string;
+  value?: number;
+}
+
+interface EspnStatCategory {
+  stats?: EspnStatEntry[];
+}
+
+interface EspnTeamStatsResponse {
+  results?: { stats?: { categories?: EspnStatCategory[] } };
+}
+
+/** Finds the first stat named `statName` in any category — categories aren't consistent across sports/seasons, so search all of them rather than assume one. */
+function findStatValue(categories: EspnStatCategory[], statName: string): number | null {
+  for (const category of categories) {
+    const entry = category.stats?.find((s) => s.name === statName);
+    if (entry && typeof entry.value === "number") return entry.value;
+  }
+  return null;
+}
+
+/**
+ * Current-season, informational-only team stats (points/game, yards/game,
+ * turnover margin) — descriptive context on This Week, not fed into the
+ * prediction model. Returns null (never throws) on anything unexpected,
+ * since ESPN's schema here is unofficial and undocumented.
+ */
+export function parseTeamStatistics(data: unknown): TeamSeasonStats | null {
+  if (typeof data !== "object" || data === null) return null;
+  const categories = (data as Partial<EspnTeamStatsResponse>).results?.stats?.categories;
+  if (!Array.isArray(categories)) return null;
+  return {
+    pointsPerGame: findStatValue(categories, "totalPointsPerGame"),
+    yardsPerGame: findStatValue(categories, "yardsPerGame"),
+    turnoverMargin: findStatValue(categories, "turnOverDifferential"),
+  };
+}
+
+export async function fetchTeamStatistics(teamId: string): Promise<TeamSeasonStats | null> {
+  const res = await fetch(`${TEAM_STATS_URL}/${teamId}/statistics`);
+  if (!res.ok) return null;
+  const data = await res.json();
+  return parseTeamStatistics(data);
+}
+
+/** Fetches season stats for many teams without firing them all at ESPN at once. Deduplicates ids first. */
+export async function fetchTeamStatsForIds(
+  teamIds: string[],
+  concurrency = 8,
+): Promise<Map<string, TeamSeasonStats | null>> {
+  const uniqueIds = [...new Set(teamIds)];
+  const results = await mapWithConcurrency(uniqueIds, concurrency, async (id) => {
+    try {
+      return await fetchTeamStatistics(id);
+    } catch {
+      return null;
+    }
+  });
+  return new Map(uniqueIds.map((id, i) => [id, results[i]]));
+}
 
 /** Upcoming FBS games from today through `daysAhead` days out. */
 export async function fetchUpcomingCfbGames(daysAhead = 8): Promise<UpcomingGame[]> {

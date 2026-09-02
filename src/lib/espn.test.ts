@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { impliedProbability, moneylineToDecimalB, parseOddsSummary, parseScoreboardEvent, toEspnDate } from "./espn";
+import {
+  impliedProbability,
+  moneylineToDecimalB,
+  parseOddsSummary,
+  parseScoreboardEvent,
+  parseTeamStatistics,
+  toEspnDate,
+} from "./espn";
 
 describe("moneylineToDecimalB", () => {
   it("converts a positive (underdog) moneyline", () => {
@@ -55,22 +62,41 @@ describe("parseScoreboardEvent", () => {
       {
         neutralSite: false,
         competitors: [
-          { homeAway: "home", team: { location: "USC" } },
-          { homeAway: "away", team: { location: "San José State" } },
+          { homeAway: "home", team: { id: "30", location: "USC" } },
+          { homeAway: "away", team: { id: "23", location: "San José State" } },
         ],
       },
     ],
   };
 
-  it("extracts home/away team and neutral-site flag", () => {
+  it("extracts home/away team, ids, and neutral-site flag", () => {
     const result = parseScoreboardEvent(validEvent);
     expect(result).toEqual({
       espnId: "401864494",
       date: "2026-08-29T19:00Z",
       homeTeam: "USC",
       awayTeam: "San José State",
+      homeTeamId: "30",
+      awayTeamId: "23",
       neutralSite: false,
     });
+  });
+
+  it("falls back to null team ids when ESPN omits them", () => {
+    const result = parseScoreboardEvent({
+      id: "1",
+      date: "x",
+      competitions: [
+        {
+          competitors: [
+            { homeAway: "home", team: { location: "A" } },
+            { homeAway: "away", team: { location: "B" } },
+          ],
+        },
+      ],
+    });
+    expect(result?.homeTeamId).toBeNull();
+    expect(result?.awayTeamId).toBeNull();
   });
 
   it("returns null for malformed/missing data instead of throwing", () => {
@@ -124,5 +150,49 @@ describe("parseOddsSummary", () => {
       awayMoneyline: null,
       spread: -42.5,
     });
+  });
+});
+
+describe("parseTeamStatistics", () => {
+  const validResponse = {
+    results: {
+      stats: {
+        categories: [
+          {
+            name: "passing",
+            stats: [
+              { name: "yardsPerGame", value: 422.6 },
+              { name: "totalPointsPerGame", value: 33.4 },
+            ],
+          },
+          {
+            name: "miscellaneous",
+            stats: [{ name: "turnOverDifferential", value: 4 }],
+          },
+        ],
+      },
+    },
+  };
+
+  it("finds each stat regardless of which category it's nested under", () => {
+    expect(parseTeamStatistics(validResponse)).toEqual({
+      pointsPerGame: 33.4,
+      yardsPerGame: 422.6,
+      turnoverMargin: 4,
+    });
+  });
+
+  it("returns nulls for stats it can't find instead of throwing", () => {
+    expect(parseTeamStatistics({ results: { stats: { categories: [] } } })).toEqual({
+      pointsPerGame: null,
+      yardsPerGame: null,
+      turnoverMargin: null,
+    });
+  });
+
+  it("returns null entirely for malformed input", () => {
+    expect(parseTeamStatistics({})).toBeNull();
+    expect(parseTeamStatistics(null)).toBeNull();
+    expect(parseTeamStatistics({ results: {} })).toBeNull();
   });
 });
