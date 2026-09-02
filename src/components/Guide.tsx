@@ -32,7 +32,36 @@ function Field({ term, children }: { term: string; children: ReactNode }) {
   );
 }
 
+/** A big, numbered, literal step — for the beginner checklist, where every click matters. */
+function Step({ n, children }: { n: number; children: ReactNode }) {
+  return (
+    <li className="flex gap-3">
+      <span
+        className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-bold text-white"
+        style={{ background: "var(--series-1)" }}
+      >
+        {n}
+      </span>
+      <span className="pt-0.5" style={{ color: "var(--text-secondary)" }}>
+        {children}
+      </span>
+    </li>
+  );
+}
+
+function ChecklistGroup({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <div className="rounded-lg border p-4" style={{ background: "var(--card-bg)", borderColor: "var(--card-border)" }}>
+      <h3 className="mb-3 text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
+        {title}
+      </h3>
+      <ol className="flex flex-col gap-3">{children}</ol>
+    </div>
+  );
+}
+
 const jumpLinks = [
+  { href: "#checklist", label: "Start here (no experience needed)" },
   { href: "#big-picture", label: "The big picture" },
   { href: "#this-week", label: "This Week (automated)" },
   { href: "#edge", label: "1. Edge Calculator" },
@@ -69,6 +98,135 @@ export function Guide() {
           </a>
         ))}
       </nav>
+
+      <Section id="checklist" title="Start here: your weekly checklist (no experience needed)">
+        <p style={{ color: "var(--text-secondary)" }}>
+          This section assumes you know nothing about betting math, probability, or any of the
+          terms elsewhere on this page. Just follow the numbered steps in order, every week.
+        </p>
+
+        <Callout kind="warning">
+          This app never places bets and never touches real money. You place every bet yourself,
+          on your own sportsbook, with your own money. Only bet what you can genuinely afford to
+          lose. Every recommendation here is a probability, not a promise — you will lose some
+          bets even when the app is working exactly as intended, and that&apos;s normal, not a
+          sign something&apos;s broken.
+        </Callout>
+
+        <ChecklistGroup title="Part 1 — One-time setup">
+          <Step n={1}>
+            Click the <strong style={{ color: "var(--text-primary)" }}>Bankroll Tracker</strong>{" "}
+            tab at the top of the page.
+          </Step>
+          <Step n={2}>
+            At the top, find the box labeled <strong style={{ color: "var(--text-primary)" }}>Starting bankroll</strong>. Type
+            in the total amount of money you&apos;re setting aside for betting — for example,
+            2000 for $2,000. This is just a number you type once; the app doesn&apos;t connect to
+            any real bank account or sportsbook.
+          </Step>
+          <Step n={3}>
+            That&apos;s it for setup. This number is saved automatically in your own browser, so
+            you don&apos;t need to enter it again.
+          </Step>
+        </ChecklistGroup>
+
+        <ChecklistGroup title="Part 2 — Whenever you want to find a bet this week (college football)">
+          <Step n={1}>
+            Click the <strong style={{ color: "var(--text-primary)" }}>This Week</strong> tab.
+          </Step>
+          <Step n={2}>
+            Wait a few seconds. You&apos;ll see a message saying it&apos;s fetching this
+            week&apos;s games — that&apos;s normal, it&apos;s checking real, live game data.
+          </Step>
+          <Step n={3}>
+            Look at the section titled something like &quot;N edges found.&quot; Each box below
+            it is one suggested bet, showing a team name, a green{" "}
+            <strong style={{ color: "var(--text-primary)" }}>BET</strong> label, and some numbers.
+          </Step>
+          <Step n={4}>
+            You don&apos;t need to understand every number. The two that matter most: &quot;Expected
+            value&quot; (bigger is better — it&apos;s the app&apos;s estimate of how favorable
+            this bet is) and &quot;Recommended stake&quot; (how much money the app suggests
+            betting, based on the bankroll number you typed in Part 1).
+          </Step>
+          <Step n={5}>
+            Ignore the collapsed sections further down (&quot;games flagged,&quot; &quot;no
+            edge,&quot; &quot;skipped&quot;) — those are the app specifically telling you{" "}
+            <em>not</em> to bet on those games. You can click on them out of curiosity, but
+            there&apos;s nothing to act on there.
+          </Step>
+          <Step n={6}>
+            Pick one (or none) of the suggested bets. Nothing forces you to bet on every
+            suggestion, or to bet at all.
+          </Step>
+        </ChecklistGroup>
+
+        <ChecklistGroup title="Part 3 — After you decide to bet">
+          <Step n={1}>Go place the actual bet yourself, for real money, on whatever sportsbook or app you use.</Step>
+          <Step n={2}>
+            Come back here and click the blue{" "}
+            <strong style={{ color: "var(--text-primary)" }}>Log this bet in the Tracker</strong>{" "}
+            button on that same box.
+          </Step>
+          <Step n={3}>
+            You&apos;ll land on the Bankroll Tracker tab with a form already mostly filled in for
+            you. Double-check the &quot;Stake ($)&quot; box matches the amount you actually bet —
+            if you bet a different amount than what was suggested, change that number to match
+            reality. Being honest here is what makes the rest of this useful.
+          </Step>
+          <Step n={4}>
+            Click the blue <strong style={{ color: "var(--text-primary)" }}>Log bet</strong>{" "}
+            button. Your bet now shows up at the bottom of the page, labeled{" "}
+            <strong style={{ color: "var(--text-primary)" }}>pending</strong>.
+          </Step>
+        </ChecklistGroup>
+
+        <ChecklistGroup title="Part 4 — After the game finishes">
+          <Step n={1}>Come back to the Bankroll Tracker tab.</Step>
+          <Step n={2}>Find your bet in the list — it still says &quot;pending.&quot;</Step>
+          <Step n={3}>
+            Click <strong style={{ color: "var(--status-good)" }}>Win</strong> if you won the bet,
+            or <strong style={{ color: "var(--status-critical)" }}>Loss</strong> if you
+            didn&apos;t. That&apos;s the only thing you need to do — everything else updates on
+            its own.
+          </Step>
+        </ChecklistGroup>
+
+        <ChecklistGroup title="Part 5 — Checking how you're actually doing (do this anytime)">
+          <Step n={1}>On the Bankroll Tracker tab, look at the row of numbers near the top.</Step>
+          <Step n={2}>
+            <strong style={{ color: "var(--text-primary)" }}>Current bankroll</strong> is how much
+            money you have right now, based on every bet you&apos;ve logged and settled.
+          </Step>
+          <Step n={3}>
+            <strong style={{ color: "var(--text-primary)" }}>Total P&amp;L</strong> means total
+            profit and loss — a plus number means you&apos;re up overall, a minus number means
+            you&apos;re down.
+          </Step>
+          <Step n={4}>
+            <strong style={{ color: "var(--text-primary)" }}>Win rate</strong> is simply the
+            percentage of your settled bets you&apos;ve won.
+          </Step>
+          <Step n={5}>
+            Now look at the chart titled{" "}
+            <strong style={{ color: "var(--text-primary)" }}>Realized vs. theoretical bankroll</strong>. The
+            solid blue line is what actually happened to your money, bet by bet. The dashed
+            orange line shows what would have happened if every single bet had been sized exactly
+            the way the app recommended. If the blue line is running{" "}
+            <em>below</em> the dashed line, you&apos;ve generally been betting bigger amounts than
+            recommended (which raises risk); if it&apos;s running <em>above</em>, you&apos;ve been
+            more cautious than recommended. Neither is &quot;wrong&quot; — it&apos;s just an
+            honest picture of what you&apos;re actually doing versus what the app suggested.
+          </Step>
+        </ChecklistGroup>
+
+        <Callout kind="tip">
+          That&apos;s the whole loop: check This Week → place a real bet → log it → settle it once
+          it&apos;s over → glance at your numbers. Repeat every week. Everything else on this page
+          explains the reasoning behind the numbers, for whenever you&apos;re curious — you never
+          have to read it to use the app.
+        </Callout>
+      </Section>
 
       <Section id="big-picture" title="The big picture">
         <p style={{ color: "var(--text-secondary)" }}>
