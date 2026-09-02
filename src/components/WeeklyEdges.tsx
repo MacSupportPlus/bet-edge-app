@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { BetEntry, summarizeBankroll } from "@/lib/bankroll";
 import { brierScore } from "@/lib/calibration";
-import { DEFAULT_ELO_OPTIONS, EloGameRecord, Game, runElo } from "@/lib/elo";
+import { DEFAULT_ELO_OPTIONS, EloGameRecord, EloHistoryPoint, Game, runElo } from "@/lib/elo";
 import {
   fetchOddsForGames,
   fetchTeamStatsForIds,
@@ -17,6 +17,7 @@ import {
 import { currency } from "@/lib/format";
 import { loadGames } from "@/lib/loadGames";
 import { predictProba, trainLogisticRegression } from "@/lib/logisticRegression";
+import { headToHead, headToHeadRecord } from "@/lib/research";
 import { classifyPick, MAX_TRUSTED_DISAGREEMENT, MAX_TRUSTED_RATIO, pickSide, PickResult } from "@/lib/scanner";
 import { matchTeamName } from "@/lib/teamMatch";
 import { useLocalStorageState } from "@/lib/useLocalStorageState";
@@ -44,10 +45,10 @@ interface Snapshot {
 }
 
 type Row =
-  | { game: UpcomingGame; status: "edge"; pick: PickResult; stake: number; provider: string }
-  | { game: UpcomingGame; status: "flagged"; pick: PickResult; provider: string }
-  | { game: UpcomingGame; status: "no-edge"; pHome: number; provider: string }
-  | { game: UpcomingGame; status: "no-odds"; pHome: number }
+  | { game: UpcomingGame; status: "edge"; pick: PickResult; stake: number; provider: string; matchedHome: string; matchedAway: string }
+  | { game: UpcomingGame; status: "flagged"; pick: PickResult; provider: string; matchedHome: string; matchedAway: string }
+  | { game: UpcomingGame; status: "no-edge"; pHome: number; provider: string; matchedHome: string; matchedAway: string }
+  | { game: UpcomingGame; status: "no-odds"; pHome: number; matchedHome: string; matchedAway: string }
   | { game: UpcomingGame; status: "unmatched" };
 
 type RetroRow =
@@ -72,6 +73,23 @@ function formatKickoff(iso: string): string {
 
 function formatMoneyline(ml: number): string {
   return ml > 0 ? `+${ml}` : `${ml}`;
+}
+
+/** Builds a link to the Game Research page for two historical-dataset team names. */
+function researchUrl(dataset: "cfb" | "nfl", home: string, away: string, espnId?: string): string {
+  const query = new URLSearchParams({ dataset, home, away });
+  if (espnId) query.set("espnId", espnId);
+  return `/research?${query.toString()}`;
+}
+
+/** "W-L-W-W-L" style summary of a team's last few results, most recent last. */
+function recentFormString(ratingHistory: Map<string, EloHistoryPoint[]>, team: string, n = 5): string {
+  const history = ratingHistory.get(team);
+  if (!history || history.length === 0) return "no games yet";
+  return history
+    .slice(-n)
+    .map((g) => g.result)
+    .join("-");
 }
 
 /** Compact "33.4 ppg · 422.6 ypg · +4 TO" summary, or null if ESPN had nothing usable for this team. */
@@ -162,7 +180,7 @@ export function WeeklyEdges() {
       knownTeams.add(g.awayTeam);
     }
 
-    const { records, finalRatings } = runElo(historicalGames, DEFAULT_ELO_OPTIONS);
+    const { records, finalRatings, ratingHistory } = runElo(historicalGames, DEFAULT_ELO_OPTIONS);
     const model = trainLogisticRegression(
       records.map((r) => [r.eloDiff]),
       records.map((r) => r.homeWin),
@@ -183,15 +201,17 @@ export function WeeklyEdges() {
 
       const odds = oddsByEspnId.get(game.espnId);
       if (!odds || odds.homeMoneyline === null || odds.awayMoneyline === null) {
-        return { game, status: "no-odds", pHome };
+        return { game, status: "no-odds", pHome, matchedHome, matchedAway };
       }
 
       const pick = pickSide(pHome, odds.homeMoneyline, odds.awayMoneyline, matchedHome, matchedAway);
       const classification = classifyPick(pick, currentBankroll, fractionalMultiplier);
 
-      if (classification.status === "no-edge") return { game, status: "no-edge", pHome, provider: odds.provider };
-      if (classification.status === "flagged") return { game, status: "flagged", pick, provider: odds.provider };
-      return { game, status: "edge", pick, stake: classification.stake, provider: odds.provider };
+      if (classification.status === "no-edge")
+        return { game, status: "no-edge", pHome, provider: odds.provider, matchedHome, matchedAway };
+      if (classification.status === "flagged")
+        return { game, status: "flagged", pick, provider: odds.provider, matchedHome, matchedAway };
+      return { game, status: "edge", pick, stake: classification.stake, provider: odds.provider, matchedHome, matchedAway };
     });
 
     const edgeRows = rows.filter((r): r is Extract<Row, { status: "edge" }> => r.status === "edge");
@@ -200,7 +220,7 @@ export function WeeklyEdges() {
     const noEdgeRows = rows.filter((r): r is Extract<Row, { status: "no-edge" }> => r.status === "no-edge");
     const unavailableRows = rows.filter((r) => r.status === "no-odds" || r.status === "unmatched");
 
-    return { edgeRows, flaggedRows, noEdgeRows, unavailableRows, gameCount: upcomingGames.length };
+    return { edgeRows, flaggedRows, noEdgeRows, unavailableRows, gameCount: upcomingGames.length, ratingHistory, historicalGames };
   }, [snapshot, loading, currentBankroll, fractionalMultiplier]);
 
   // "How would we have done?" — replays games already played in the last
@@ -380,6 +400,8 @@ export function WeeklyEdges() {
                 const statsAreStale =
                   isStaleSeasonStats(homeStats ?? null, snapshot?.currentWeek ?? null) ||
                   isStaleSeasonStats(awayStats ?? null, snapshot?.currentWeek ?? null);
+                const h2h = analysis.historicalGames.length > 0 ? headToHead(analysis.historicalGames, row.matchedHome, row.matchedAway) : [];
+                const h2hRecord = headToHeadRecord(h2h, row.matchedHome);
                 return (
                   <div
                     key={row.game.espnId}
@@ -418,13 +440,40 @@ export function WeeklyEdges() {
                       <StatTile label="Expected value" value={`+${(row.pick.summary.expectancy * 100).toFixed(1)}%`} accent="good" />
                       <StatTile label="Recommended stake" value={currency(row.stake)} />
                     </div>
-                    <Link
-                      href={`/tracker?${query}`}
-                      className="mt-3 inline-block rounded-md px-3 py-1.5 text-xs font-medium text-white"
-                      style={{ background: "var(--series-1)" }}
-                    >
-                      Log this bet in the Tracker →
-                    </Link>
+                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                      <Link
+                        href={`/tracker?${query}`}
+                        className="inline-block rounded-md px-3 py-1.5 text-xs font-medium text-white"
+                        style={{ background: "var(--series-1)" }}
+                      >
+                        Log this bet in the Tracker →
+                      </Link>
+                      <Link
+                        href={researchUrl("cfb", row.matchedHome, row.matchedAway, row.game.espnId)}
+                        className="inline-block rounded-md border px-3 py-1.5 text-xs font-medium"
+                        style={{ borderColor: "var(--card-border)", color: "var(--text-secondary)" }}
+                      >
+                        Research this game →
+                      </Link>
+                    </div>
+                    <details className="mt-2">
+                      <summary className="cursor-pointer text-xs" style={{ color: "var(--text-muted)" }}>
+                        Quick look: recent form &amp; head-to-head
+                      </summary>
+                      <div className="mt-1.5 flex flex-col gap-1 text-xs" style={{ color: "var(--text-secondary)" }}>
+                        <div>
+                          {row.matchedAway} last 5: {recentFormString(analysis.ratingHistory, row.matchedAway)}
+                        </div>
+                        <div>
+                          {row.matchedHome} last 5: {recentFormString(analysis.ratingHistory, row.matchedHome)}
+                        </div>
+                        <div>
+                          {h2h.length > 0
+                            ? `Head-to-head: ${row.matchedHome} is ${h2hRecord.wins}-${h2hRecord.losses}${h2hRecord.ties > 0 ? `-${h2hRecord.ties}` : ""} all-time vs. ${row.matchedAway} (${h2h.length} meeting${h2h.length === 1 ? "" : "s"})`
+                            : "Head-to-head: no prior meetings in the dataset"}
+                        </div>
+                      </div>
+                    </details>
                   </div>
                 );
               })}
@@ -439,11 +488,16 @@ export function WeeklyEdges() {
               </summary>
               <div className="mt-2 flex flex-col gap-1 text-xs" style={{ color: "var(--text-muted)" }}>
                 {analysis.flaggedRows.map((row) => (
-                  <div key={row.game.espnId}>
-                    {row.game.awayTeam} at {row.game.homeTeam} — model says {row.pick.team}{" "}
-                    {(row.pick.summary.p * 100).toFixed(0)}%, market implies only{" "}
-                    {(row.pick.marketImplied * 100).toFixed(0)}% ({formatMoneyline(row.pick.moneyline)}). Not shown
-                    as a bet — this gap almost certainly means the model is missing something.
+                  <div key={row.game.espnId} className="flex flex-wrap items-center gap-x-2">
+                    <span>
+                      {row.game.awayTeam} at {row.game.homeTeam} — model says {row.pick.team}{" "}
+                      {(row.pick.summary.p * 100).toFixed(0)}%, market implies only{" "}
+                      {(row.pick.marketImplied * 100).toFixed(0)}% ({formatMoneyline(row.pick.moneyline)}). Not shown
+                      as a bet — this gap almost certainly means the model is missing something.
+                    </span>
+                    <Link href={researchUrl("cfb", row.matchedHome, row.matchedAway, row.game.espnId)} style={{ color: "var(--series-1)" }}>
+                      Research →
+                    </Link>
                   </div>
                 ))}
               </div>
@@ -455,11 +509,21 @@ export function WeeklyEdges() {
               <summary className="cursor-pointer text-sm" style={{ color: "var(--text-secondary)" }}>
                 {analysis.noEdgeRows.length} game{analysis.noEdgeRows.length === 1 ? "" : "s"} checked, no edge
               </summary>
+              <p className="mt-1 text-xs" style={{ color: "var(--text-muted)" }}>
+                &quot;No edge&quot; only means <em>this model, priced against this market</em>, doesn&apos;t see
+                one — it&apos;s not a claim that nothing is worth a closer look. These are exactly the games
+                worth your own research if you have an angle the model doesn&apos;t.
+              </p>
               <div className="mt-2 flex flex-col gap-1 text-xs" style={{ color: "var(--text-muted)" }}>
                 {analysis.noEdgeRows.map((row) => (
-                  <div key={row.game.espnId}>
-                    {row.game.awayTeam} at {row.game.homeTeam} — model {(row.pHome * 100).toFixed(0)}% home, priced
-                    efficiently at {row.provider}
+                  <div key={row.game.espnId} className="flex flex-wrap items-center gap-x-2">
+                    <span>
+                      {row.game.awayTeam} at {row.game.homeTeam} — model {(row.pHome * 100).toFixed(0)}% home, priced
+                      efficiently at {row.provider}
+                    </span>
+                    <Link href={researchUrl("cfb", row.matchedHome, row.matchedAway, row.game.espnId)} style={{ color: "var(--series-1)" }}>
+                      Research →
+                    </Link>
                   </div>
                 ))}
               </div>
@@ -474,9 +538,16 @@ export function WeeklyEdges() {
               </summary>
               <div className="mt-2 flex flex-col gap-1 text-xs" style={{ color: "var(--text-muted)" }}>
                 {analysis.unavailableRows.map((row) => (
-                  <div key={row.game.espnId}>
-                    {row.game.awayTeam} at {row.game.homeTeam} —{" "}
-                    {row.status === "unmatched" ? "team not found in historical data" : "odds not posted yet"}
+                  <div key={row.game.espnId} className="flex flex-wrap items-center gap-x-2">
+                    <span>
+                      {row.game.awayTeam} at {row.game.homeTeam} —{" "}
+                      {row.status === "unmatched" ? "team not found in historical data" : "odds not posted yet"}
+                    </span>
+                    {row.status === "no-odds" && (
+                      <Link href={researchUrl("cfb", row.matchedHome, row.matchedAway, row.game.espnId)} style={{ color: "var(--series-1)" }}>
+                        Research →
+                      </Link>
+                    )}
                   </div>
                 ))}
               </div>
@@ -549,6 +620,12 @@ export function WeeklyEdges() {
                     )}
                     {row.status === "flagged" && <span style={{ color: "var(--text-muted)" }}>flagged, not bet</span>}
                     {row.status === "no-odds" && <span style={{ color: "var(--text-muted)" }}>no odds available</span>}
+                    <Link
+                      href={researchUrl("cfb", row.record.homeTeam, row.record.awayTeam, row.record.gameId)}
+                      style={{ color: "var(--series-1)" }}
+                    >
+                      Research →
+                    </Link>
                   </div>
                 );
               })}

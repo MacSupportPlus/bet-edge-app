@@ -66,10 +66,25 @@ function expectedScore(ratingA: number, ratingB: number): number {
   return 1 / (1 + 10 ** (-(ratingA - ratingB) / 400));
 }
 
+export interface EloHistoryPoint {
+  gameId?: string;
+  date: string;
+  season: number;
+  opponent: string;
+  isHome: boolean;
+  pointsFor: number;
+  pointsAgainst: number;
+  result: "W" | "L" | "T";
+  /** This team's rating AFTER this game (post-game, includes the K-factor update). */
+  ratingAfter: number;
+}
+
 export interface EloRun {
   records: EloGameRecord[];
   /** Every team's rating after the last game it played in the input. */
   finalRatings: Map<string, number>;
+  /** Every team's full game-by-game rating trajectory, in chronological order — for rating-trend charts and recent-form lookups. */
+  ratingHistory: Map<string, EloHistoryPoint[]>;
 }
 
 /**
@@ -99,6 +114,12 @@ export function runElo(games: Game[], options: EloOptions = DEFAULT_ELO_OPTIONS)
   };
 
   const records: EloGameRecord[] = [];
+  const ratingHistory = new Map<string, EloHistoryPoint[]>();
+  const pushHistory = (team: string, point: EloHistoryPoint) => {
+    const list = ratingHistory.get(team);
+    if (list) list.push(point);
+    else ratingHistory.set(team, [point]);
+  };
 
   for (const game of games) {
     const homeEloPre = rating(game.homeTeam, game.season);
@@ -106,6 +127,14 @@ export function runElo(games: Game[], options: EloOptions = DEFAULT_ELO_OPTIONS)
     const homeAdv = game.neutral ? 0 : options.homeAdvantage;
 
     const expectedHome = expectedScore(homeEloPre + homeAdv, awayEloPre);
+
+    const result: "W" | "L" | "T" = game.homeScore === game.awayScore ? "T" : game.homeScore > game.awayScore ? "W" : "L";
+    const delta =
+      game.homeScore === game.awayScore
+        ? options.kFactor * (0.5 - expectedHome)
+        : options.kFactor * ((game.homeScore > game.awayScore ? 1 : 0) - expectedHome);
+    const homeRatingAfter = homeEloPre + delta;
+    const awayRatingAfter = awayEloPre - delta;
 
     if (game.homeScore !== game.awayScore) {
       const homeWin: 0 | 1 = game.homeScore > game.awayScore ? 1 : 0;
@@ -120,20 +149,36 @@ export function runElo(games: Game[], options: EloOptions = DEFAULT_ELO_OPTIONS)
         eloDiff: homeEloPre + homeAdv - awayEloPre,
         homeWin,
       });
-      const actualHome = homeWin;
-      const delta = options.kFactor * (actualHome - expectedHome);
-      ratings.set(game.homeTeam, homeEloPre + delta);
-      ratings.set(game.awayTeam, awayEloPre - delta);
-    } else {
-      // Tie: update ratings toward 0.5 but emit no training record (no
-      // binary win/loss label to learn from).
-      const delta = options.kFactor * (0.5 - expectedHome);
-      ratings.set(game.homeTeam, homeEloPre + delta);
-      ratings.set(game.awayTeam, awayEloPre - delta);
     }
+
+    pushHistory(game.homeTeam, {
+      gameId: game.gameId,
+      date: game.date,
+      season: game.season,
+      opponent: game.awayTeam,
+      isHome: true,
+      pointsFor: game.homeScore,
+      pointsAgainst: game.awayScore,
+      result,
+      ratingAfter: homeRatingAfter,
+    });
+    pushHistory(game.awayTeam, {
+      gameId: game.gameId,
+      date: game.date,
+      season: game.season,
+      opponent: game.homeTeam,
+      isHome: false,
+      pointsFor: game.awayScore,
+      pointsAgainst: game.homeScore,
+      result: result === "W" ? "L" : result === "L" ? "W" : "T",
+      ratingAfter: awayRatingAfter,
+    });
+
+    ratings.set(game.homeTeam, homeRatingAfter);
+    ratings.set(game.awayTeam, awayRatingAfter);
   }
 
-  return { records, finalRatings: ratings };
+  return { records, finalRatings: ratings, ratingHistory };
 }
 
 /** Convenience wrapper for callers that only need the per-game training records. */

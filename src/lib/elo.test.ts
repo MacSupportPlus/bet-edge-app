@@ -110,6 +110,45 @@ describe("runElo finalRatings", () => {
   });
 });
 
+describe("ratingHistory", () => {
+  it("gives both teams one point per game, in chronological order", () => {
+    const games: Game[] = [
+      game({ date: "2024-01-01", homeTeam: "A", awayTeam: "B", homeScore: 30, awayScore: 10 }),
+      game({ date: "2024-01-08", homeTeam: "B", awayTeam: "A", homeScore: 20, awayScore: 24, neutral: true }),
+    ];
+    const { ratingHistory } = runElo(games, DEFAULT_ELO_OPTIONS);
+    expect(ratingHistory.get("A")).toHaveLength(2);
+    expect(ratingHistory.get("B")).toHaveLength(2);
+    expect(ratingHistory.get("A")!.map((p) => p.date)).toEqual(["2024-01-01", "2024-01-08"]);
+  });
+
+  it("records the correct opponent, home/away flag, score, and result from each team's own perspective", () => {
+    const games: Game[] = [game({ date: "2024-01-01", homeTeam: "A", awayTeam: "B", homeScore: 30, awayScore: 10 })];
+    const { ratingHistory } = runElo(games, DEFAULT_ELO_OPTIONS);
+    const [aPoint] = ratingHistory.get("A")!;
+    const [bPoint] = ratingHistory.get("B")!;
+    expect(aPoint).toMatchObject({ opponent: "B", isHome: true, pointsFor: 30, pointsAgainst: 10, result: "W" });
+    expect(bPoint).toMatchObject({ opponent: "A", isHome: false, pointsFor: 10, pointsAgainst: 30, result: "L" });
+  });
+
+  it("records a tie for both teams and still updates ratingAfter", () => {
+    const games: Game[] = [game({ date: "2024-01-01", homeTeam: "A", awayTeam: "B", homeScore: 14, awayScore: 14 })];
+    const { ratingHistory } = runElo(games, DEFAULT_ELO_OPTIONS);
+    expect(ratingHistory.get("A")![0].result).toBe("T");
+    expect(ratingHistory.get("B")![0].result).toBe("T");
+  });
+
+  it("ratingAfter matches the next game's pregame rating for that team", () => {
+    const games: Game[] = [
+      game({ date: "2024-01-01", homeTeam: "A", awayTeam: "B", homeScore: 30, awayScore: 10 }),
+      game({ date: "2024-01-08", homeTeam: "A", awayTeam: "C", neutral: true }),
+    ];
+    const { ratingHistory, records } = runElo(games, DEFAULT_ELO_OPTIONS);
+    const aFirstGameRatingAfter = ratingHistory.get("A")![0].ratingAfter;
+    expect(records[1].homeEloPre).toBeCloseTo(aFirstGameRatingAfter, 6);
+  });
+});
+
 describe("seasonRegression", () => {
   const opts = { kFactor: 20, initialRating: 1500, homeAdvantage: 65, seasonRegression: 0.5 };
 

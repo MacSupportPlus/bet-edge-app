@@ -23,7 +23,7 @@ export interface LogisticRegressionModel {
   lossHistory: number[];
 }
 
-function sigmoid(z: number): number {
+export function sigmoid(z: number): number {
   if (z >= 0) {
     const e = Math.exp(-z);
     return 1 / (1 + e);

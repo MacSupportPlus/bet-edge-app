@@ -10,6 +10,7 @@ const LINKS = [
   { href: "/simulator", label: "Risk of Ruin" },
   { href: "/tracker", label: "Bankroll Tracker" },
   { href: "/model", label: "Probability Model" },
+  { href: "/research", label: "Research" },
 ];
 
 export function NavBar() {

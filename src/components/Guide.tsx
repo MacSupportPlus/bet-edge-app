@@ -68,6 +68,7 @@ const jumpLinks = [
   { href: "#simulator", label: "2. Risk of Ruin" },
   { href: "#tracker", label: "3. Bankroll Tracker" },
   { href: "#model", label: "4. Probability Model" },
+  { href: "#research", label: "5. Game Research" },
   { href: "#key-ideas", label: "Key ideas to remember" },
 ];
 
@@ -79,10 +80,10 @@ export function Guide() {
           Guide: how to actually use this app
         </h1>
         <p className="mt-1 text-sm" style={{ color: "var(--text-secondary)" }}>
-          Five tools, one job: turn a probability estimate into a safe, honest answer about
+          One job, several tools: turn a probability estimate into a safe, honest answer about
           whether to bet and how much. Nothing here predicts winners — you (or the model
-          tab, or the automated This Week tab) supply the probability, and everything else
-          is about sizing and survival.
+          tab, or the automated This Week tab) supply the probability, Research helps you
+          stress-test it, and everything else is about sizing and survival.
         </p>
       </div>
 
@@ -609,6 +610,51 @@ export function Guide() {
           ever-growing bankroll at unchanged odds for over a decade, which no sportsbook would
           actually allow. Treat it as an illustration of how powerful (and dangerous)
           uncapped compounding is, not a real projection — and use the per-bet growth rate instead.
+        </Callout>
+      </Section>
+
+      <Section id="research" title="5. Game Research">
+        <p style={{ color: "var(--text-secondary)" }}>
+          Everything the model sees for a specific matchup, laid out for you to dig into yourself
+          — not to replace your own judgment, but to give it something real to work with. Open it
+          from a{" "}
+          <strong style={{ color: "var(--text-primary)" }}>Research this game</strong> link on any
+          card in This Week (including flagged and no-edge games — an automated &quot;no edge&quot;
+          call just means the model and the market agree, not that there&apos;s nothing worth a
+          closer look), or pick any two teams yourself on the{" "}
+          <Link href="/research" className="underline">
+            Research page
+          </Link>{" "}
+          directly.
+        </p>
+
+        <SubHeading>What&apos;s on the page</SubHeading>
+        <dl className="flex flex-col gap-2">
+          <Field term="Model probability, decomposed">
+            Not just a number — how much of it came from Elo alone, versus how much the added team
+            stats (NFL only) moved it. Lets you judge whether the model&apos;s conviction rests on
+            one signal or several agreeing.
+          </Field>
+          <Field term="Elo rating trend">
+            Both teams&apos; last several games plotted side by side — climbing means beating
+            expectations lately, flattening or dropping means the opposite.
+          </Field>
+          <Field term="Recent form &amp; head-to-head">
+            Plain game logs: who each team just played, what happened, and every prior meeting
+            between these two teams in the dataset. The same information a human handicapper would
+            start from.
+          </Field>
+          <Field term="Team stat trends (NFL only)">
+            Total yards, turnover margin, and offensive efficiency, one point per game — the same
+            numbers the NFL model actually trains on, so you can see the trend behind the diff.
+          </Field>
+        </dl>
+
+        <Callout kind="tip">
+          Every edge card and every collapsed &quot;flagged&quot; or &quot;no edge&quot; item in
+          This Week has its own Research link — the model only recommends a small slice of each
+          week&apos;s games, but every game is here to look into if you have your own angle
+          (injury news, a rivalry factor, weather) the model can&apos;t see.
         </Callout>
       </Section>
 
