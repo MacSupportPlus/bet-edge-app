@@ -1,0 +1,60 @@
+name: Refresh game data
+
+# Keeps public/data/*.json current so Elo ratings, NFL team-stat features,
+# and the This Week report card don't quietly go stale as the season plays
+# out. Re-runs the same script used to build the data locally, then commits
+# and pushes only if something actually changed — a push to main is what
+# triggers Netlify's existing continuous deployment, so a successful refresh
+# here goes live on its own, no further action needed.
+
+on:
+  schedule:
+    # 09:00 UTC daily — after Sunday/Monday-night NFL games and CFB's
+    # Thu-Sat slate are final, comfortably ahead of the next slate.
+    - cron: "0 9 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Regenerate data
+        run: node scripts/prepare-data.mjs | tee /tmp/refresh-log.txt
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Commit and push if data changed
+        run: |
+          if git diff --quiet -- public/data; then
+            echo "No data changes — nothing to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add public/data
+          {
+            echo "Automated data refresh"
+            echo
+            cat /tmp/refresh-log.txt
+          } > /tmp/commit-message.txt
+          git commit -F /tmp/commit-message.txt
+          git push
