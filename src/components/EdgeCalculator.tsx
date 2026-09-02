@@ -65,6 +65,15 @@ export function EdgeCalculator() {
           </div>
         </label>
 
+        <p className="text-xs sm:col-span-3" style={{ color: "var(--text-muted)" }}>
+          <strong style={{ color: "var(--text-secondary)" }}>What this slider does:</strong> it
+          sets how often you believe this bet actually wins. Right now it&apos;s set to{" "}
+          <strong style={{ color: "var(--text-secondary)" }}>{pPercent.toFixed(0)} out of every
+          100 times</strong> — like a weighted coin that lands your way that often. Drag it left
+          or right and every number on this page (and the chart below) recalculates instantly for
+          the new value — nothing is saved until you change it again.
+        </p>
+
         <label className="flex flex-col gap-1 text-sm">
           <span style={{ color: "var(--text-secondary)" }}>
             Net odds (b) — win pays b×stake
@@ -170,9 +179,16 @@ export function EdgeCalculator() {
         className="rounded-lg border p-4"
         style={{ background: "var(--card-bg)", borderColor: "var(--card-border)" }}
       >
-        <h2 className="mb-2 text-sm font-medium" style={{ color: "var(--text-primary)" }}>
+        <h2 className="mb-1 text-sm font-medium" style={{ color: "var(--text-primary)" }}>
           Geometric growth rate vs. stake size
         </h2>
+        <p className="mb-2 text-xs" style={{ color: "var(--text-muted)" }}>
+          This redraws instantly whenever you move the slider or change the odds above. It
+          answers: &quot;if I keep betting this same edge over and over, how fast does my money
+          grow at different bet sizes?&quot; The line rises, peaks, then falls — the peak is the
+          single best stake size; everything to its right means betting too much, which grows
+          your money <em>slower</em>, not faster, and eventually guarantees you go broke.
+        </p>
         <GrowthCurveChart p={p} b={b} fractionalMultiplier={fractionalMultiplier} />
       </div>
     </div>

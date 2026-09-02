@@ -108,7 +108,7 @@ export function BankrollTracker() {
 
       {/* starting bankroll */}
       <div
-        className="flex items-center gap-3 rounded-lg border p-4"
+        className="flex flex-wrap items-center gap-3 rounded-lg border p-4"
         style={{ background: "var(--card-bg)", borderColor: "var(--card-border)" }}
       >
         <label className="flex items-center gap-2 text-sm">
@@ -168,6 +168,14 @@ export function BankrollTracker() {
         </h2>
         <BankrollChart realized={realized} theoretical={theoretical} startingBankroll={startingBankroll} />
       </div>
+
+      <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+        <strong style={{ color: "var(--text-secondary)" }}>Logging a bet:</strong> &quot;p&quot;
+        is your own honest guess at the win chance, as a percent (e.g. 60 means &quot;I think
+        this wins 60 times out of 100&quot;) — it doesn&apos;t have to match a suggestion from
+        another tab. This number is only used later to compare your actual results against
+        &quot;what if I&apos;d sized every bet by the book&quot; on the chart below.
+      </p>
 
       {/* add bet form */}
       <div

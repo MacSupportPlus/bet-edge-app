@@ -16,7 +16,7 @@ export function NavBar() {
   const pathname = usePathname();
   return (
     <nav
-      className="flex items-center gap-1 border-b px-6 py-3"
+      className="flex items-center gap-1 overflow-x-auto border-b px-3 py-3 sm:px-6"
       style={{ borderColor: "var(--card-border)", background: "var(--card-bg)" }}
     >
       {LINKS.map((link) => {
@@ -25,7 +25,7 @@ export function NavBar() {
           <Link
             key={link.href}
             href={link.href}
-            className="rounded-md px-3 py-1.5 text-sm transition-colors"
+            className="shrink-0 whitespace-nowrap rounded-md px-3 py-1.5 text-sm transition-colors"
             style={{
               color: active ? "white" : "var(--text-secondary)",
               background: active ? "var(--series-1)" : "transparent",

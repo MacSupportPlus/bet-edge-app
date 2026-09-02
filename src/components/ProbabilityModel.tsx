@@ -203,6 +203,14 @@ export function ProbabilityModel() {
           </div>
 
           <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+            <strong style={{ color: "var(--text-secondary)" }}>What these boxes do:</strong>{" "}
+            &quot;K-factor&quot; controls how fast a team&apos;s rating reacts to a surprising
+            result — higher means one upset moves it more. &quot;Home advantage&quot; is how many
+            rating points a team gets just for playing at home. Changing either one retrains the
+            model from scratch and every chart and number below updates for the new settings.
+          </p>
+
+          <p className="text-xs" style={{ color: "var(--text-muted)" }}>
             Trained on {analysis.trainCount.toLocaleString()} games ({analysis.trainDateRange[0]} to{" "}
             {analysis.trainDateRange[1]}) · evaluated on {analysis.testCount.toLocaleString()} held-out games (
             {analysis.testDateRange[0]} to {analysis.testDateRange[1]}) · a home team {(analysis.pAtEven * 100).toFixed(0)}%
@@ -251,7 +259,7 @@ export function ProbabilityModel() {
               series={analysis.backtests.map((b) => ({ label: b.label, color: b.color, path: b.result.path }))}
               startingBankroll={startingBankroll}
             />
-            <div className="mt-4 grid grid-cols-3 gap-3">
+            <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
               {analysis.backtests.map((b) => (
                 <StatTile
                   key={b.key}
@@ -262,7 +270,7 @@ export function ProbabilityModel() {
                 />
               ))}
             </div>
-            <div className="mt-3 grid grid-cols-3 gap-3">
+            <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
               {analysis.backtests.map((b) => (
                 <StatTile
                   key={`${b.key}-growth`}

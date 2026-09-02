@@ -138,6 +138,16 @@ export function RiskOfRuinSimulator() {
         </label>
       </div>
 
+      <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+        <strong style={{ color: "var(--text-secondary)" }}>What the sliders and boxes above do:</strong>{" "}
+        &quot;Win probability&quot; sets how often you believe the bet wins — right now it&apos;s{" "}
+        {pPercent.toFixed(0)} out of every 100 tries. &quot;Bets per bettor&quot; is how many
+        times in a row someone keeps betting (like a whole season), and &quot;Simulated
+        bettors&quot; is how many imaginary people the app tests this on at once, to see the
+        range of what could happen. Change any of these and the chart and bars below redraw
+        immediately.
+      </p>
+
       {/* rule selector */}
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-xs" style={{ color: "var(--text-muted)" }}>
@@ -178,9 +188,14 @@ export function RiskOfRuinSimulator() {
 
       {/* fan chart */}
       <div className="rounded-lg border p-4" style={{ background: "var(--card-bg)", borderColor: "var(--card-border)" }}>
-        <h2 className="mb-2 text-sm font-medium" style={{ color: "var(--text-primary)" }}>
+        <h2 className="mb-1 text-sm font-medium" style={{ color: "var(--text-primary)" }}>
           {comparisons.find((c) => c.key === selectedRuleKey)?.label} — simulated bankroll paths
         </h2>
+        <p className="mb-2 text-xs" style={{ color: "var(--text-muted)" }}>
+          Every faint line is one simulated person&apos;s money over time, betting the sizing
+          rule you picked above. Clicking a different rule (Full Kelly / ½ Kelly / Flat / 2×
+          Kelly) re-runs the whole simulation and redraws this chart for that rule.
+        </p>
         <FanChart
           paths={selected.result.paths}
           meanPath={selected.result.meanPath}
@@ -197,10 +212,10 @@ export function RiskOfRuinSimulator() {
         <div className="flex flex-col gap-2">
           {comparisons.map((c) => (
             <div key={c.key} className="flex items-center gap-3">
-              <span className="w-56 shrink-0 text-xs" style={{ color: "var(--text-secondary)" }}>
+              <span className="w-20 shrink-0 text-xs sm:w-56" style={{ color: "var(--text-secondary)" }}>
                 {c.label}
               </span>
-              <div className="h-3 flex-1 overflow-hidden rounded-full" style={{ background: "var(--gridline)" }}>
+              <div className="h-3 min-w-8 flex-1 overflow-hidden rounded-full" style={{ background: "var(--gridline)" }}>
                 <div
                   className="h-full rounded-full"
                   style={{
