@@ -65,11 +65,15 @@ function toObjects(rows) {
   return rows.slice(1).map((r) => Object.fromEntries(header.map((h, i) => [h, r[i]])));
 }
 
-async function fetchCsv(url) {
+async function fetchCsv(url, encoding = "utf-8") {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Failed to fetch ${url}: ${res.status}`);
-  const text = await res.text();
-  return toObjects(parseCsv(text));
+  // cfbfastR-data's CSV is Latin-1 encoded (not UTF-8) despite being served
+  // with no charset — decoding accented names (e.g. "San José State") as
+  // UTF-8 corrupts them into replacement characters. Buffer supports
+  // 'latin1' natively; res.text() always assumes UTF-8.
+  const buf = Buffer.from(await res.arrayBuffer());
+  return toObjects(parseCsv(buf.toString(encoding)));
 }
 
 function isNum(v) {
@@ -102,6 +106,7 @@ async function prepareCfb() {
   console.log("Fetching CFB games...");
   const rows = await fetchCsv(
     "https://raw.githubusercontent.com/sportsdataverse/cfbfastR-data/main/schedules/cfb_games_info.csv",
+    "latin1",
   );
   const games = rows
     .filter((r) => isNum(r.home_points) && isNum(r.away_points) && r.start_date)

@@ -34,6 +34,7 @@ function Field({ term, children }: { term: string; children: ReactNode }) {
 
 const jumpLinks = [
   { href: "#big-picture", label: "The big picture" },
+  { href: "#this-week", label: "This Week (automated)" },
   { href: "#edge", label: "1. Edge Calculator" },
   { href: "#simulator", label: "2. Risk of Ruin" },
   { href: "#tracker", label: "3. Bankroll Tracker" },
@@ -49,9 +50,10 @@ export function Guide() {
           Guide: how to actually use this app
         </h1>
         <p className="mt-1 text-sm" style={{ color: "var(--text-secondary)" }}>
-          Four tools, one job: turn a probability estimate into a safe, honest answer about
+          Five tools, one job: turn a probability estimate into a safe, honest answer about
           whether to bet and how much. Nothing here predicts winners — you (or the model
-          tab) supply the probability, and everything else is about sizing and survival.
+          tab, or the automated This Week tab) supply the probability, and everything else
+          is about sizing and survival.
         </p>
       </div>
 
@@ -111,9 +113,68 @@ export function Guide() {
           </li>
         </ol>
         <Callout kind="tip">
-          You don&apos;t need the Probability Model tab to use this app. If you already have your
-          own view on a game&apos;s win probability (from research, a different model, plain
-          judgment), skip straight to the Edge Calculator with your own number.
+          For college football specifically, the{" "}
+          <Link href="/this-week" className="underline">
+            This Week
+          </Link>{" "}
+          tab automates steps 1 and 2 — it pulls this week&apos;s games and live odds itself and
+          shows you only the ones worth a look. You still don&apos;t need the Probability Model
+          tab (or This Week) to use this app at all — with your own view on a game&apos;s win
+          probability, skip straight to the Edge Calculator with your own number.
+        </Callout>
+      </Section>
+
+      <Section id="this-week" title="This Week (automated, college football)">
+        <p style={{ color: "var(--text-secondary)" }}>
+          Does steps 1 and 2 of the big picture above for you: it pulls this week&apos;s upcoming
+          FBS games and live odds automatically, runs each one through the same Elo + probability
+          model as the Model tab, and surfaces only the games worth a second look — sized against
+          your current bankroll from the Tracker. This is the tab built specifically so you have
+          less to type and fewer chances to make a manual-entry mistake.
+        </p>
+
+        <SubHeading>How to use it</SubHeading>
+        <ol className="flex flex-col gap-1 pl-5" style={{ color: "var(--text-secondary)" }}>
+          <li className="list-decimal">Open the tab — it loads this week&apos;s schedule and odds on its own.</li>
+          <li className="list-decimal">
+            Pick a stake-sizing rule (defaults to ½ Kelly) if you want something other than the
+            default.
+          </li>
+          <li className="list-decimal">
+            Read the top list: each card is a specific recommendation (team, odds, expected
+            value, recommended stake).
+          </li>
+          <li className="list-decimal">
+            Click <strong style={{ color: "var(--text-primary)" }}>Log this bet</strong> on a card
+            you actually place — it carries the numbers straight into the Bankroll Tracker&apos;s
+            form so you don&apos;t retype them.
+          </li>
+        </ol>
+
+        <SubHeading>What the numbers mean</SubHeading>
+        <dl className="flex flex-col gap-2">
+          <Field term="Model prob. / Market implied">
+            The model&apos;s win probability for the recommended side, next to what the
+            sportsbook&apos;s own price implies (which already includes the book&apos;s built-in
+            margin, the &quot;vig&quot;). The gap between them is where the edge comes from.
+          </Field>
+          <Field term="Expected value">Same meaning as Expectancy on the Edge Calculator — expected profit per $1 staked, at this specific market price.</Field>
+          <Field term="Flagged games">
+            Games where the model disagrees with the market by a lot get pulled out of the
+            recommendation list and shown separately instead of hidden entirely. A big
+            disagreement with a real sportsbook&apos;s price is much more likely to mean the
+            model is missing something (an injury, a coaching change, a scheduling quirk) than
+            that free money was found — so these are shown as a limitation to understand, never
+            as a bet to place.
+          </Field>
+        </dl>
+
+        <Callout kind="warning">
+          This is still the same simplified model from the Probability Model tab — no injuries,
+          weather, or roster news factored in — reading live odds from one sportsbook via
+          ESPN&apos;s public, unofficial API, which can change or go down without notice. Treat
+          every recommendation here as a starting point to sanity-check against what you actually
+          know about the matchup, not a guarantee.
         </Callout>
       </Section>
 

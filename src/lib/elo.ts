@@ -48,12 +48,20 @@ function expectedScore(ratingA: number, ratingB: number): number {
   return 1 / (1 + 10 ** (-(ratingA - ratingB) / 400));
 }
 
+export interface EloRun {
+  records: EloGameRecord[];
+  /** Every team's rating after the last game it played in the input. */
+  finalRatings: Map<string, number>;
+}
+
 /**
  * Replays games in chronological order, updating a running Elo rating per
- * team, and returns one record per decisive (non-tied) game carrying the
- * pregame ratings and the eventual outcome.
+ * team. Returns one record per decisive (non-tied) game carrying the
+ * pregame ratings and the eventual outcome, plus the final rating for every
+ * team once all games have been replayed (useful for predicting a future
+ * matchup that isn't in the input at all).
  */
-export function computeEloDataset(games: Game[], options: EloOptions = DEFAULT_ELO_OPTIONS): EloGameRecord[] {
+export function runElo(games: Game[], options: EloOptions = DEFAULT_ELO_OPTIONS): EloRun {
   const ratings = new Map<string, number>();
   const rating = (team: string) => ratings.get(team) ?? options.initialRating;
 
@@ -91,5 +99,10 @@ export function computeEloDataset(games: Game[], options: EloOptions = DEFAULT_E
     }
   }
 
-  return records;
+  return { records, finalRatings: ratings };
+}
+
+/** Convenience wrapper for callers that only need the per-game training records. */
+export function computeEloDataset(games: Game[], options: EloOptions = DEFAULT_ELO_OPTIONS): EloGameRecord[] {
+  return runElo(games, options).records;
 }

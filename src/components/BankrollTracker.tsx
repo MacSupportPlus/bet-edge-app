@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import {
   BetEntry,
   drawdownSeries,
@@ -33,13 +34,29 @@ function emptyForm() {
 }
 
 export function BankrollTracker() {
+  const searchParams = useSearchParams();
   const [startingBankroll, setStartingBankroll] = useLocalStorageState("bankroll-tracker:starting", 10000);
   const [bets, setBets] = useLocalStorageState<BetEntry[]>("bankroll-tracker:bets", []);
   const [fractionalMultiplier, setFractionalMultiplier] = useLocalStorageState(
     "bankroll-tracker:fractional",
     0.5,
   );
-  const [form, setForm] = useState(emptyForm());
+  // Prefills the form when arriving from a link like /tracker?desc=...&p=...&b=...&stake=...
+  // (e.g. the "Log this bet" button on the This Week tab) — read once on mount.
+  const [form, setForm] = useState(() => {
+    const desc = searchParams.get("desc");
+    const p = searchParams.get("p");
+    const b = searchParams.get("b");
+    const stake = searchParams.get("stake");
+    if (!desc && !p && !b && !stake) return emptyForm();
+    return {
+      date: today(),
+      description: desc ?? "",
+      pPercent: p ? Number(p) : 55,
+      b: b ? Number(b) : 1,
+      stake: stake ? Number(stake) : 100,
+    };
+  });
 
   const realized = useMemo(() => realizedPath(startingBankroll, bets), [startingBankroll, bets]);
   const theoretical = useMemo(

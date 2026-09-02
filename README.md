@@ -43,6 +43,8 @@ some growth rate for protection against a wrong `p`.
 | 3 | Bankroll tracker: log real bets, track realized vs. theoretical growth, drawdown | ✅ Done |
 | 4 | Probability estimation model (calibrated `p`, Brier score, backtesting) | ✅ Done |
 | 5 | Portfolio Kelly for correlated concurrent bets | Stretch |
+| — | **This Week**: automated live-odds edge scanner (college football) | ✅ Done |
+| — | In-app Guide explaining every tab in plain language | ✅ Done |
 
 ### Phase 1 — Edge calculator
 
@@ -161,15 +163,48 @@ alone isn't enough protection). The **per-bet growth rate** (the same `g`
 from Phase 1, backed out of the backtest) is the honest number, and it's
 shown right alongside the dollar figure for exactly this reason.
 
+### This Week — automated live-odds scanner (college football)
+
+The natural conclusion of Phase 4: instead of you manually looking up a
+matchup's odds and typing `p`/`b` into the Edge Calculator, this tab does it
+for you. It fetches this week's upcoming FBS games and live moneylines from
+[ESPN's public, unofficial site API](src/lib/espn.ts) (no key, no signup,
+CORS-open), matches each team against the Phase 4 historical dataset (see
+[`src/lib/teamMatch.ts`](src/lib/teamMatch.ts) — exact match, then a small
+verified alias table for renamed/abbreviated schools, then a normalized
+fallback; anything it can't confidently match is skipped, never guessed),
+computes each team's *current* Elo rating, and runs the same probability
+model from Phase 4 to find real positive-EV bets — sized against your actual
+current bankroll from the Tracker.
+
+**Building this surfaced a real problem, not just a feature**: a
+single-feature Elo model can be well-calibrated *on average* while still
+being badly wrong on individual extreme mismatches (a simple model
+confidently favoring a huge underdog over a market-priced 6% shot, on a
+lopsided "buy game"). [`src/lib/scanner.ts`](src/lib/scanner.ts) only ever
+recommends a pick when the model's probability is within both a 15-point gap
+*and* a 2× ratio of the market's own implied probability — both checks have
+to pass. Anything outside that gets pulled into a separate "flagged" list
+instead of being hidden or, worse, recommended: a big disagreement with a
+real sportsbook price is much more likely to mean the model is missing
+something than that free money was found.
+
+Also included: `src/lib/concurrency.ts` (a tested, limited-concurrency
+fetcher so ~90 games don't all hit ESPN at once) and a "Log this bet" link on
+every recommendation that carries the numbers straight into the Bankroll
+Tracker's form.
+
 ## Tech stack
 
 Next.js (App Router) + TypeScript + Tailwind CSS. The formulas, Monte Carlo
 simulations, and the Phase 4 model/backtest all run entirely client-side —
 `public/data/*.json` is fetched once and everything else (Elo, regression,
-calibration, backtesting) happens in the browser. The bankroll tracker
-persists to localStorage for now rather than a real backend — see the
-Phase 3 note above. A real backend may still be added later (multi-device
-sync for the tracker, live odds/data feeds for the model).
+calibration, backtesting) happens in the browser. The This Week tab fetches
+live odds directly from the browser too — no backend needed there either,
+since ESPN's API is CORS-open. The bankroll tracker persists to localStorage
+for now rather than a real backend — see the Phase 3 note above. A real
+backend may still be added later (multi-device sync for the tracker, a
+licensed odds API for markets beyond moneyline).
 
 Testing: [Vitest](https://vitest.dev) for every math/data module.
 

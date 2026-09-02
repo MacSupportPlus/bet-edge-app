@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computeEloDataset, DEFAULT_ELO_OPTIONS, Game } from "./elo";
+import { computeEloDataset, DEFAULT_ELO_OPTIONS, Game, runElo } from "./elo";
 
 function game(overrides: Partial<Game>): Game {
   return {
@@ -77,5 +77,35 @@ describe("computeEloDataset", () => {
       game({ date: "2024-01-08", homeTeam: "B", awayTeam: "A", homeScore: 5, awayScore: 30 }),
     ];
     expect(computeEloDataset(games, DEFAULT_ELO_OPTIONS)).toEqual(computeEloDataset(games, DEFAULT_ELO_OPTIONS));
+  });
+});
+
+describe("runElo finalRatings", () => {
+  it("gives every team that played its post-game rating, not just teams in the last game", () => {
+    const games: Game[] = [
+      game({ date: "2024-01-01", homeTeam: "A", awayTeam: "B", homeScore: 30, awayScore: 10 }),
+      game({ date: "2024-01-08", homeTeam: "C", awayTeam: "D", homeScore: 10, awayScore: 30 }),
+    ];
+    const { finalRatings } = runElo(games, DEFAULT_ELO_OPTIONS);
+    expect(finalRatings.size).toBe(4);
+    // A won as home favorite-ish -> above initial; B lost -> below initial.
+    expect(finalRatings.get("A")!).toBeGreaterThan(DEFAULT_ELO_OPTIONS.initialRating);
+    expect(finalRatings.get("B")!).toBeLessThan(DEFAULT_ELO_OPTIONS.initialRating);
+  });
+
+  it("reflects only the LATEST rating when a team plays more than once", () => {
+    const games: Game[] = [
+      game({ date: "2024-01-01", homeTeam: "A", awayTeam: "B", homeScore: 30, awayScore: 10 }),
+      game({ date: "2024-01-08", homeTeam: "A", awayTeam: "C", homeScore: 10, awayScore: 30, neutral: true }),
+    ];
+    const { finalRatings, records } = runElo(games, DEFAULT_ELO_OPTIONS);
+    // A's final rating should differ from its pre-game-2 rating (records[1].homeEloPre)
+    // since it then lost that game.
+    expect(finalRatings.get("A")).not.toBeCloseTo(records[1].homeEloPre, 5);
+  });
+
+  it("computeEloDataset still returns just the records array (back-compat)", () => {
+    const games: Game[] = [game({})];
+    expect(computeEloDataset(games, DEFAULT_ELO_OPTIONS)).toEqual(runElo(games, DEFAULT_ELO_OPTIONS).records);
   });
 });
