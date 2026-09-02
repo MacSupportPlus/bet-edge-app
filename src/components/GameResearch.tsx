@@ -2,12 +2,17 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import Link from "next/link";
+import { BetEntry, summarizeBankroll } from "@/lib/bankroll";
 import { DEFAULT_ELO_OPTIONS, Game, runElo } from "@/lib/elo";
 import { fetchGameOdds, GameOdds } from "@/lib/espn";
+import { currency } from "@/lib/format";
 import { loadGames } from "@/lib/loadGames";
 import { predictProba, sigmoid, trainLogisticRegression } from "@/lib/logisticRegression";
 import { headToHead, headToHeadRecord, seasonAverage, teamStatTrend } from "@/lib/research";
+import { classifyPick, MAX_TRUSTED_DISAGREEMENT, MAX_TRUSTED_RATIO, pickSide } from "@/lib/scanner";
 import { computeTeamStatDiffs, loadTeamStats, NEUTRAL_TEAM_STAT_FEATURES, TeamGameStat } from "@/lib/teamStats";
+import { useLocalStorageState } from "@/lib/useLocalStorageState";
 import { LineChart } from "./LineChart";
 import { StatTile } from "./StatTile";
 
@@ -15,12 +20,29 @@ type Dataset = "nfl" | "cfb";
 
 const RECENT_GAMES_SHOWN = 8;
 
+const FRACTIONAL_OPTIONS = [
+  { label: "Full Kelly", value: 1 },
+  { label: "½ Kelly", value: 0.5 },
+  { label: "¼ Kelly", value: 0.25 },
+];
+
 function fmtDate(iso: string): string {
   try {
     return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "2-digit" });
   } catch {
     return iso;
   }
+}
+
+function formatMoneyline(ml: number): string {
+  return ml > 0 ? `+${ml}` : `${ml}`;
+}
+
+/** Parses a manual odds input; returns null for empty/invalid rather than NaN, so callers can tell "not entered" from "entered wrong". */
+function parseMoneyline(raw: string): number | null {
+  if (raw.trim() === "") return null;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : null;
 }
 
 export function GameResearch() {
@@ -52,15 +74,36 @@ export function GameResearch() {
     };
   }, [dataset]);
 
+  // Manual odds entry — always editable, so this works for a matchup ESPN
+  // isn't live-tracking too, not just ones opened from This Week.
+  const [homeMoneylineInput, setHomeMoneylineInput] = useState("");
+  const [awayMoneylineInput, setAwayMoneylineInput] = useState("");
+  const [spreadInput, setSpreadInput] = useState("");
+  const [totalInput, setTotalInput] = useState("");
+
   // Keyed by which espnId it resolved for, so a stale result never renders
-  // as if it belonged to a different (or absent) game id.
+  // as if it belonged to a different (or absent) game id. Also pre-fills the
+  // manual inputs above the first (and only the first) time live odds show up
+  // for this matchup — this effect only re-fires when espnId/dataset actually
+  // change to a different game, so a user's own edits afterward are never
+  // clobbered by a later re-render.
   const [oddsResult, setOddsResult] = useState<{ espnId: string; odds: GameOdds | null } | null>(null);
   useEffect(() => {
     if (!espnId) return;
     let cancelled = false;
     fetchGameOdds(dataset, espnId)
-      .then((odds) => {
-        if (!cancelled) setOddsResult({ espnId, odds });
+      .then((fetchedOdds) => {
+        if (cancelled) return;
+        setOddsResult({ espnId, odds: fetchedOdds });
+        if (fetchedOdds?.homeMoneyline !== null && fetchedOdds?.homeMoneyline !== undefined) {
+          setHomeMoneylineInput(String(fetchedOdds.homeMoneyline));
+        }
+        if (fetchedOdds?.awayMoneyline !== null && fetchedOdds?.awayMoneyline !== undefined) {
+          setAwayMoneylineInput(String(fetchedOdds.awayMoneyline));
+        }
+        if (fetchedOdds?.spread !== null && fetchedOdds?.spread !== undefined) {
+          setSpreadInput(String(fetchedOdds.spread));
+        }
       })
       .catch(() => {
         if (!cancelled) setOddsResult({ espnId, odds: null });
@@ -70,6 +113,11 @@ export function GameResearch() {
     };
   }, [dataset, espnId]);
   const odds = oddsResult?.espnId === espnId ? oddsResult.odds : null;
+
+  const [startingBankroll] = useLocalStorageState("bankroll-tracker:starting", 10000);
+  const [bets] = useLocalStorageState<BetEntry[]>("bankroll-tracker:bets", []);
+  const [fractionalMultiplier, setFractionalMultiplier] = useLocalStorageState("weekly-edges:fractional", 0.5);
+  const currentBankroll = useMemo(() => summarizeBankroll(startingBankroll, bets).currentBankroll, [startingBankroll, bets]);
 
   // fetchResult's initial `dataset` value matches the default dataset, so a
   // plain `fetchResult.dataset !== dataset` check reads false before the
@@ -152,6 +200,19 @@ export function GameResearch() {
       awayStatTrend: hasTeamStats && teamStats ? teamStatTrend(games, teamStats, away) : [],
     };
   }, [games, teamStats, home, away]);
+
+  // The exact same pick/classify pipeline as This Week, but for whatever
+  // odds are typed in above — so any matchup you can research is also one
+  // you can check for a real edge, not just the ones ESPN is tracking live.
+  const betCheck = useMemo(() => {
+    if (!analysis) return null;
+    const homeMl = parseMoneyline(homeMoneylineInput);
+    const awayMl = parseMoneyline(awayMoneylineInput);
+    if (homeMl === null || awayMl === null) return null;
+    const pick = pickSide(analysis.pHome, homeMl, awayMl, home, away);
+    const classification = classifyPick(pick, currentBankroll, fractionalMultiplier);
+    return { pick, classification };
+  }, [analysis, homeMoneylineInput, awayMoneylineInput, home, away, currentBankroll, fractionalMultiplier]);
 
   const teamOptions = useMemo(() => {
     if (!games) return [];
@@ -329,18 +390,140 @@ export function GameResearch() {
             </p>
           </div>
 
-          {odds && (odds.homeMoneyline !== null || odds.spread !== null) && (
-            <div className="rounded-lg border p-4" style={{ background: "var(--card-bg)", borderColor: "var(--card-border)" }}>
-              <h2 className="mb-2 text-sm font-medium" style={{ color: "var(--text-primary)" }}>
-                Market context (via {odds.provider})
-              </h2>
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-                {odds.spread !== null && <StatTile label="Spread" value={`${home} ${odds.spread > 0 ? "+" : ""}${odds.spread}`} />}
-                {odds.homeMoneyline !== null && <StatTile label={`${home} ML`} value={odds.homeMoneyline > 0 ? `+${odds.homeMoneyline}` : `${odds.homeMoneyline}`} />}
-                {odds.awayMoneyline !== null && <StatTile label={`${away} ML`} value={odds.awayMoneyline > 0 ? `+${odds.awayMoneyline}` : `${odds.awayMoneyline}`} />}
-              </div>
+          <div className="rounded-lg border p-4" style={{ background: "var(--card-bg)", borderColor: "var(--card-border)" }}>
+            <h2 className="mb-1 text-sm font-medium" style={{ color: "var(--text-primary)" }}>
+              Is this a good bet?
+            </h2>
+            <p className="mb-3 text-xs" style={{ color: "var(--text-muted)" }}>
+              {odds
+                ? `Pre-filled from live odds via ${odds.provider} — edit any of these if you found a better number elsewhere, or if you're checking a hypothetical line.`
+                : "Type in the moneyline for each side (from any sportsbook) to run this matchup through the same check as This Week — spread and total are just for your own reference and aren't used in the calculation below."}
+            </p>
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              <label className="flex flex-col gap-1 text-sm">
+                <span style={{ color: "var(--text-secondary)" }}>{away} moneyline</span>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  placeholder="e.g. +150"
+                  value={awayMoneylineInput}
+                  onChange={(e) => setAwayMoneylineInput(e.target.value)}
+                  className="rounded-md border px-2 py-1.5 tabular-nums"
+                  style={{ borderColor: "var(--card-border)", color: "var(--text-primary)", background: "var(--card-bg)" }}
+                />
+              </label>
+              <label className="flex flex-col gap-1 text-sm">
+                <span style={{ color: "var(--text-secondary)" }}>{home} moneyline</span>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  placeholder="e.g. -180"
+                  value={homeMoneylineInput}
+                  onChange={(e) => setHomeMoneylineInput(e.target.value)}
+                  className="rounded-md border px-2 py-1.5 tabular-nums"
+                  style={{ borderColor: "var(--card-border)", color: "var(--text-primary)", background: "var(--card-bg)" }}
+                />
+              </label>
+              <label className="flex flex-col gap-1 text-sm">
+                <span style={{ color: "var(--text-secondary)" }}>Spread (reference)</span>
+                <input
+                  type="text"
+                  placeholder={`e.g. ${home} -3.5`}
+                  value={spreadInput}
+                  onChange={(e) => setSpreadInput(e.target.value)}
+                  className="rounded-md border px-2 py-1.5 tabular-nums"
+                  style={{ borderColor: "var(--card-border)", color: "var(--text-primary)", background: "var(--card-bg)" }}
+                />
+              </label>
+              <label className="flex flex-col gap-1 text-sm">
+                <span style={{ color: "var(--text-secondary)" }}>Total / O-U (reference)</span>
+                <input
+                  type="text"
+                  placeholder="e.g. 44.5"
+                  value={totalInput}
+                  onChange={(e) => setTotalInput(e.target.value)}
+                  className="rounded-md border px-2 py-1.5 tabular-nums"
+                  style={{ borderColor: "var(--card-border)", color: "var(--text-primary)", background: "var(--card-bg)" }}
+                />
+              </label>
             </div>
-          )}
+
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <span className="text-xs" style={{ color: "var(--text-muted)" }}>
+                Stake sizing:
+              </span>
+              {FRACTIONAL_OPTIONS.map((opt) => (
+                <button
+                  key={opt.value}
+                  onClick={() => setFractionalMultiplier(opt.value)}
+                  className="rounded-full border px-3 py-1 text-xs transition-colors"
+                  style={{
+                    borderColor: fractionalMultiplier === opt.value ? "var(--series-1)" : "var(--card-border)",
+                    background: fractionalMultiplier === opt.value ? "var(--series-1)" : "transparent",
+                    color: fractionalMultiplier === opt.value ? "white" : "var(--text-secondary)",
+                  }}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+
+            {!betCheck && (
+              <p className="mt-3 text-xs" style={{ color: "var(--text-muted)" }}>
+                Enter both moneylines above to check this matchup for an edge.
+              </p>
+            )}
+
+            {betCheck && betCheck.classification.status === "no-edge" && (
+              <p className="mt-3 text-sm" style={{ color: "var(--text-secondary)" }}>
+                No edge at these odds — the model&apos;s probability doesn&apos;t beat what the market
+                is already pricing in.
+              </p>
+            )}
+
+            {betCheck && betCheck.classification.status === "flagged" && (
+              <div
+                className="mt-3 rounded-lg border px-4 py-3 text-sm"
+                style={{ borderColor: "var(--status-critical)", color: "var(--status-critical)" }}
+              >
+                <strong>Flagged, not a recommendation.</strong> The model says {betCheck.pick.team}{" "}
+                {(betCheck.pick.summary.p * 100).toFixed(0)}%, but the market only implies{" "}
+                {(betCheck.pick.marketImplied * 100).toFixed(0)}% — a gap this big (past{" "}
+                {(MAX_TRUSTED_DISAGREEMENT * 100).toFixed(0)} points or {MAX_TRUSTED_RATIO}× the market&apos;s
+                own number) is far more likely to mean the model is missing something real than that
+                free money was found.
+              </div>
+            )}
+
+            {betCheck && betCheck.classification.status === "edge" && (
+              <div className="mt-3 rounded-lg border p-4" style={{ borderColor: "var(--status-good)" }}>
+                <span
+                  className="inline-block rounded-full px-3 py-1 text-xs font-semibold text-white"
+                  style={{ background: "var(--status-good)" }}
+                >
+                  BET {betCheck.pick.team} {formatMoneyline(betCheck.pick.moneyline)}
+                </span>
+                <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  <StatTile label="Model prob." value={`${(betCheck.pick.summary.p * 100).toFixed(1)}%`} />
+                  <StatTile label="Market implied" value={`${(betCheck.pick.marketImplied * 100).toFixed(1)}%`} sub="includes vig" />
+                  <StatTile label="Expected value" value={`+${(betCheck.pick.summary.expectancy * 100).toFixed(1)}%`} accent="good" />
+                  <StatTile label="Recommended stake" value={currency(betCheck.classification.stake)} />
+                </div>
+                <Link
+                  href={`/tracker?${new URLSearchParams({
+                    desc: `${betCheck.pick.team} ML (${formatMoneyline(betCheck.pick.moneyline)}) — ${away} @ ${home}`,
+                    p: (betCheck.pick.summary.p * 100).toFixed(1),
+                    b: betCheck.pick.b.toFixed(4),
+                    stake: betCheck.classification.stake.toFixed(0),
+                  }).toString()}`}
+                  className="mt-3 inline-block rounded-md px-3 py-1.5 text-xs font-medium text-white"
+                  style={{ background: "var(--series-1)" }}
+                >
+                  Log this bet in the Tracker →
+                </Link>
+              </div>
+            )}
+          </div>
 
           <div className="rounded-lg border p-4" style={{ background: "var(--card-bg)", borderColor: "var(--card-border)" }}>
             <h2 className="mb-1 text-sm font-medium" style={{ color: "var(--text-primary)" }}>

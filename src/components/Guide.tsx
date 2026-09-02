@@ -635,6 +635,14 @@ export function Guide() {
 
         <SubHeading>What&apos;s on the page</SubHeading>
         <dl className="flex flex-col gap-2">
+          <Field term="Is this a good bet?">
+            The same pick/stake check as This Week, but for any matchup you research — not just the
+            ones ESPN has live odds for. If you opened this page from a This Week card, the
+            moneylines are pre-filled from the live odds already; either way, they&apos;re always
+            editable, so you can check a line you found elsewhere or a purely hypothetical one. Spread
+            and total are there just for your own reference and don&apos;t feed the calculation —
+            everything here runs on moneylines, the same as the Edge Calculator.
+          </Field>
           <Field term="Model probability, decomposed">
             Not just a number — how much of it came from Elo alone, versus how much the added team
             stats (NFL only) moved it. Lets you judge whether the model&apos;s conviction rests on
