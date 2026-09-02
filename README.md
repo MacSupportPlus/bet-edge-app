@@ -40,7 +40,7 @@ some growth rate for protection against a wrong `p`.
 |---|---|---|
 | 1 | Edge calculator: expectancy, volatility, Kelly fraction, growth-rate curve | ✅ Done |
 | 2 | Monte Carlo risk-of-ruin simulator (ensemble average vs. median/geometric path) | ✅ Done |
-| 3 | Bankroll tracker: log real bets, track realized vs. theoretical growth, drawdown | 🔜 Next |
+| 3 | Bankroll tracker: log real bets, track realized vs. theoretical growth, drawdown | ✅ Done |
 | 4 | Probability estimation model (calibrated `p`, Brier score, backtesting) | Stretch |
 | 5 | Portfolio Kelly for correlated concurrent bets | Stretch |
 
@@ -95,13 +95,36 @@ seeded, reproducible PRNG plus pure simulate functions), unit-tested in
 the ensemble mean exceeds the median (the "average is a lie" effect) and that
 2× Kelly ruins more often than full Kelly.
 
+### Phase 3 — Bankroll tracker
+
+Lets you log real bets (date, description, `p` estimate used, odds, stake)
+and settle them as a win or loss. From that log it computes and displays two
+bankroll paths side by side:
+
+- **realized** — what actually happened, from the stakes you actually placed
+- **theoretical** — what would have happened with the *same picks and
+  outcomes* but every bet sized at recommended fractional-Kelly instead
+
+Comparing the two isolates sizing discipline from pick quality: if realized
+tracks below theoretical, sizing (not picking) is where value is being lost.
+Also shown: current bankroll, total P&L, win rate, current drawdown, and max
+drawdown from peak.
+
+Data is currently saved to **this browser's localStorage only** — it's
+per-device and not synced anywhere. That's a deliberate v1 shortcut (no
+backend/auth needed yet); a real database is the natural next step if you
+want it accessible from more than one device.
+
+The math lives in [`src/lib/bankroll.ts`](src/lib/bankroll.ts), unit-tested in
+[`src/lib/bankroll.test.ts`](src/lib/bankroll.test.ts).
+
 ## Tech stack
 
-Next.js (App Router) + TypeScript + Tailwind CSS, fully client-side for now —
-the formulas and Monte Carlo simulations are cheap enough to run in-browser.
-No backend yet; one may be added in Phase 3 for persisting a real bankroll
-tracker, and possibly Phase 4 if a Python ML service is needed for the
-probability model.
+Next.js (App Router) + TypeScript + Tailwind CSS. The formulas and Monte
+Carlo simulations run entirely client-side. The bankroll tracker persists to
+localStorage for now rather than a real backend — see the Phase 3 note
+above. A real backend may still be added later (multi-device sync for the
+tracker, or a Python ML service for the Phase 4 probability model).
 
 Testing: [Vitest](https://vitest.dev) for the math module.
 

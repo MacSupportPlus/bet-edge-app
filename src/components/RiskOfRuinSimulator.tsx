@@ -2,30 +2,10 @@
 
 import { useMemo, useState } from "react";
 import { kellyFraction } from "@/lib/edge";
+import { currency } from "@/lib/format";
 import { SizingRule, simulateEnsemble } from "@/lib/simulate";
 import { FanChart } from "./FanChart";
-
-function currency(n: number) {
-  return n.toLocaleString(undefined, { style: "currency", currency: "USD", maximumFractionDigits: 0 });
-}
-
-function StatTile({ label, value, sub }: { label: string; value: string; sub?: string }) {
-  return (
-    <div className="rounded-lg border px-4 py-3" style={{ background: "var(--card-bg)", borderColor: "var(--card-border)" }}>
-      <div className="text-xs" style={{ color: "var(--text-muted)" }}>
-        {label}
-      </div>
-      <div className="mt-1 text-2xl font-semibold" style={{ color: "var(--text-primary)" }}>
-        {value}
-      </div>
-      {sub && (
-        <div className="mt-0.5 text-xs" style={{ color: "var(--text-secondary)" }}>
-          {sub}
-        </div>
-      )}
-    </div>
-  );
-}
+import { StatTile } from "./StatTile";
 
 export function RiskOfRuinSimulator() {
   const [pPercent, setPPercent] = useState(55);
