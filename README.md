@@ -41,7 +41,7 @@ some growth rate for protection against a wrong `p`.
 | 1 | Edge calculator: expectancy, volatility, Kelly fraction, growth-rate curve | ✅ Done |
 | 2 | Monte Carlo risk-of-ruin simulator (ensemble average vs. median/geometric path) | ✅ Done |
 | 3 | Bankroll tracker: log real bets, track realized vs. theoretical growth, drawdown | ✅ Done |
-| 4 | Probability estimation model (calibrated `p`, Brier score, backtesting) | Stretch |
+| 4 | Probability estimation model (calibrated `p`, Brier score, backtesting) | ✅ Done |
 | 5 | Portfolio Kelly for correlated concurrent bets | Stretch |
 
 ### Phase 1 — Edge calculator
@@ -118,15 +118,60 @@ want it accessible from more than one device.
 The math lives in [`src/lib/bankroll.ts`](src/lib/bankroll.ts), unit-tested in
 [`src/lib/bankroll.test.ts`](src/lib/bankroll.test.ts).
 
+### Phase 4 — Probability model (NFL & college football)
+
+A real, trained probability model — no vegas lines used as an input, so it's
+not just re-deriving the market's own number. The pipeline:
+
+1. **Data**: real historical games pulled from two free, no-API-key public
+   sources — [nflverse](https://github.com/nflverse/nfldata) (NFL, 1999–present,
+   ~7,300 games) and [cfbfastR-data](https://github.com/sportsdataverse/cfbfastR-data)
+   (college football, 2004–present, ~15,300 games). [`scripts/prepare-data.mjs`](scripts/prepare-data.mjs)
+   downloads and trims these to `public/data/{nfl,cfb}-games.json`; re-run it
+   (`node scripts/prepare-data.mjs`) any time to refresh with newer games.
+2. **Feature engineering**: [`src/lib/elo.ts`](src/lib/elo.ts) replays every
+   season chronologically, computing an Elo rating per team from nothing but
+   final scores. Each game's feature is the *pregame* Elo gap — ratings as
+   they stood before that game — so there's no leakage of the outcome it's
+   predicting.
+3. **Model**: [`src/lib/logisticRegression.ts`](src/lib/logisticRegression.ts), a
+   from-scratch batch-gradient-descent logistic regression (no ML library),
+   trained on the earliest 80% of games and evaluated only on the most
+   recent 20% it never saw.
+4. **Calibration**: [`src/lib/calibration.ts`](src/lib/calibration.ts) computes
+   Brier score and a reliability diagram (predicted probability vs. actual
+   win frequency, bucketed) on the held-out set — shown against a naive
+   "always predict the training-set home-win rate" baseline. On the shipped
+   data the model beats that baseline on both sports.
+5. **Backtest**: [`src/lib/backtest.ts`](src/lib/backtest.ts) replays the
+   held-out games in order, comparing flat betting vs. full Kelly vs. half
+   Kelly, reusing `edge.ts`'s exact staking math, at an assumed standard
+   -110 (b≈0.909) on both sides — a simplifying assumption, since this
+   dataset carries no real sportsbook lines.
+
+**A genuinely useful accident worth keeping in mind**: full-Kelly's backtest
+bankroll figure can come out absurdly large (sometimes far beyond anything
+real) over 1,000+ held-out games. That's not a bug — it's raw Kelly math
+compounding a sustained edge for that many consecutive bets, which assumes
+unlimited market depth at an unchanged price for over a decade, something no
+real sportsbook would ever allow. It's also why every bet is hard-capped at
+25% of the current bankroll regardless of Kelly's raw recommendation (even
+half-Kelly is still ~50% on a very confident prediction — fractional sizing
+alone isn't enough protection). The **per-bet growth rate** (the same `g`
+from Phase 1, backed out of the backtest) is the honest number, and it's
+shown right alongside the dollar figure for exactly this reason.
+
 ## Tech stack
 
-Next.js (App Router) + TypeScript + Tailwind CSS. The formulas and Monte
-Carlo simulations run entirely client-side. The bankroll tracker persists to
-localStorage for now rather than a real backend — see the Phase 3 note
-above. A real backend may still be added later (multi-device sync for the
-tracker, or a Python ML service for the Phase 4 probability model).
+Next.js (App Router) + TypeScript + Tailwind CSS. The formulas, Monte Carlo
+simulations, and the Phase 4 model/backtest all run entirely client-side —
+`public/data/*.json` is fetched once and everything else (Elo, regression,
+calibration, backtesting) happens in the browser. The bankroll tracker
+persists to localStorage for now rather than a real backend — see the
+Phase 3 note above. A real backend may still be added later (multi-device
+sync for the tracker, live odds/data feeds for the model).
 
-Testing: [Vitest](https://vitest.dev) for the math module.
+Testing: [Vitest](https://vitest.dev) for every math/data module.
 
 ## Getting started
 
