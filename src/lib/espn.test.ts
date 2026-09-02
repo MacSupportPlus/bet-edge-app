@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   impliedProbability,
+  isStaleSeasonStats,
   moneylineToDecimalB,
   parseOddsSummary,
   parseScoreboardEvent,
@@ -163,6 +164,7 @@ describe("parseTeamStatistics", () => {
             stats: [
               { name: "yardsPerGame", value: 422.6 },
               { name: "totalPointsPerGame", value: 33.4 },
+              { name: "gamesPlayed", value: 14 },
             ],
           },
           {
@@ -179,6 +181,7 @@ describe("parseTeamStatistics", () => {
       pointsPerGame: 33.4,
       yardsPerGame: 422.6,
       turnoverMargin: 4,
+      gamesPlayed: 14,
     });
   });
 
@@ -187,6 +190,7 @@ describe("parseTeamStatistics", () => {
       pointsPerGame: null,
       yardsPerGame: null,
       turnoverMargin: null,
+      gamesPlayed: null,
     });
   });
 
@@ -194,5 +198,32 @@ describe("parseTeamStatistics", () => {
     expect(parseTeamStatistics({})).toBeNull();
     expect(parseTeamStatistics(null)).toBeNull();
     expect(parseTeamStatistics({ results: {} })).toBeNull();
+  });
+});
+
+describe("isStaleSeasonStats", () => {
+  it("flags a team with far more games played than weeks elapsed as stale (last season's fallback)", () => {
+    expect(isStaleSeasonStats({ pointsPerGame: 33, yardsPerGame: 400, turnoverMargin: 2, gamesPlayed: 12 }, 1)).toBe(
+      true,
+    );
+  });
+
+  it("does not flag a plausible current-season game count", () => {
+    expect(isStaleSeasonStats({ pointsPerGame: 33, yardsPerGame: 400, turnoverMargin: 2, gamesPlayed: 1 }, 1)).toBe(
+      false,
+    );
+    expect(isStaleSeasonStats({ pointsPerGame: 33, yardsPerGame: 400, turnoverMargin: 2, gamesPlayed: 6 }, 7)).toBe(
+      false,
+    );
+  });
+
+  it("doesn't flag anything when the inputs needed to judge are missing", () => {
+    expect(isStaleSeasonStats(null, 1)).toBe(false);
+    expect(isStaleSeasonStats({ pointsPerGame: null, yardsPerGame: null, turnoverMargin: null, gamesPlayed: null }, 1)).toBe(
+      false,
+    );
+    expect(isStaleSeasonStats({ pointsPerGame: 33, yardsPerGame: 400, turnoverMargin: 2, gamesPlayed: 12 }, null)).toBe(
+      false,
+    );
   });
 });

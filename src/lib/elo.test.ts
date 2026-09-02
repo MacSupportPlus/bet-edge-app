@@ -109,3 +109,48 @@ describe("runElo finalRatings", () => {
     expect(computeEloDataset(games, DEFAULT_ELO_OPTIONS)).toEqual(runElo(games, DEFAULT_ELO_OPTIONS).records);
   });
 });
+
+describe("seasonRegression", () => {
+  const opts = { kFactor: 20, initialRating: 1500, homeAdvantage: 65, seasonRegression: 0.5 };
+
+  it("does nothing within the same season", () => {
+    const games: Game[] = [
+      game({ date: "2024-01-01", season: 2024, homeTeam: "A", awayTeam: "X", homeScore: 40, awayScore: 0 }),
+      game({ date: "2024-01-08", season: 2024, homeTeam: "A", awayTeam: "Y" }),
+    ];
+    const noRegression = computeEloDataset(games, { ...opts, seasonRegression: 0 });
+    const withRegression = computeEloDataset(games, opts);
+    // Same season both games -> A's rating going into game 2 is untouched either way.
+    expect(withRegression[1].homeEloPre).toBeCloseTo(noRegression[1].homeEloPre, 6);
+  });
+
+  it("pulls a team's rating toward initialRating the first time it plays in a new season", () => {
+    const games: Game[] = [
+      game({ date: "2023-12-01", season: 2023, homeTeam: "A", awayTeam: "B", homeScore: 40, awayScore: 0 }),
+      game({ date: "2024-09-01", season: 2024, homeTeam: "A", awayTeam: "C" }),
+    ];
+    const noRegression = computeEloDataset(games, { ...opts, seasonRegression: 0 })[1].homeEloPre;
+    const withRegression = computeEloDataset(games, opts)[1].homeEloPre;
+    // A finished 2023 well above 1500 (blew out B); 50% regression should pull
+    // its 2024 season-opener rating roughly halfway back to 1500.
+    expect(noRegression).toBeGreaterThan(opts.initialRating);
+    expect(withRegression).toBeLessThan(noRegression);
+    expect(withRegression).toBeGreaterThan(opts.initialRating);
+  });
+
+  it("has no effect on a team's very first game ever (nothing to regress from)", () => {
+    const games: Game[] = [game({ season: 2024 })];
+    const record = computeEloDataset(games, opts)[0];
+    expect(record.homeEloPre).toBe(opts.initialRating);
+    expect(record.awayEloPre).toBe(opts.initialRating);
+  });
+
+  it("a full reset (seasonRegression=1) sends a returning team's rating exactly to initialRating", () => {
+    const games: Game[] = [
+      game({ date: "2023-12-01", season: 2023, homeTeam: "A", awayTeam: "B", homeScore: 40, awayScore: 0 }),
+      game({ date: "2024-09-01", season: 2024, homeTeam: "A", awayTeam: "C" }),
+    ];
+    const record = computeEloDataset(games, { ...opts, seasonRegression: 1 })[1];
+    expect(record.homeEloPre).toBeCloseTo(opts.initialRating, 6);
+  });
+});

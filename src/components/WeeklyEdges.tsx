@@ -3,8 +3,17 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { BetEntry, summarizeBankroll } from "@/lib/bankroll";
-import { DEFAULT_ELO_OPTIONS, Game, runElo } from "@/lib/elo";
-import { fetchOddsForGames, fetchTeamStatsForIds, fetchUpcomingCfbGames, GameOdds, TeamSeasonStats, UpcomingGame } from "@/lib/espn";
+import { brierScore } from "@/lib/calibration";
+import { DEFAULT_ELO_OPTIONS, EloGameRecord, Game, runElo } from "@/lib/elo";
+import {
+  fetchOddsForGames,
+  fetchTeamStatsForIds,
+  fetchUpcomingCfbGames,
+  GameOdds,
+  isStaleSeasonStats,
+  TeamSeasonStats,
+  UpcomingGame,
+} from "@/lib/espn";
 import { currency } from "@/lib/format";
 import { loadGames } from "@/lib/loadGames";
 import { predictProba, trainLogisticRegression } from "@/lib/logisticRegression";
@@ -13,6 +22,9 @@ import { matchTeamName } from "@/lib/teamMatch";
 import { useLocalStorageState } from "@/lib/useLocalStorageState";
 import { Callout } from "./Callout";
 import { StatTile } from "./StatTile";
+
+/** How far back "games already played this week" reaches — wide enough to cover one full CFB game week (Thu-Sat plus stragglers). */
+const RETRO_LOOKBACK_DAYS = 10;
 
 const FRACTIONAL_OPTIONS = [
   { label: "Full Kelly", value: 1 },
@@ -24,8 +36,10 @@ interface Snapshot {
   requestId: number;
   historicalGames: Game[];
   upcomingGames: UpcomingGame[];
+  currentWeek: number | null;
   oddsByEspnId: Map<string, GameOdds | null>;
   teamStatsByTeamId: Map<string, TeamSeasonStats | null>;
+  retroOddsByGameId: Map<string, GameOdds | null>;
   error: string | null;
 }
 
@@ -35,6 +49,12 @@ type Row =
   | { game: UpcomingGame; status: "no-edge"; pHome: number; provider: string }
   | { game: UpcomingGame; status: "no-odds"; pHome: number }
   | { game: UpcomingGame; status: "unmatched" };
+
+type RetroRow =
+  | { record: EloGameRecord; pHome: number; actualHomeWin: boolean; status: "edge"; pick: PickResult; stake: number; won: boolean; profit: number }
+  | { record: EloGameRecord; pHome: number; actualHomeWin: boolean; status: "flagged"; pick: PickResult }
+  | { record: EloGameRecord; pHome: number; actualHomeWin: boolean; status: "no-edge" }
+  | { record: EloGameRecord; pHome: number; actualHomeWin: boolean; status: "no-odds" };
 
 function formatKickoff(iso: string): string {
   try {
@@ -81,17 +101,33 @@ export function WeeklyEdges() {
     let cancelled = false;
     (async () => {
       try {
-        const [historicalGames, upcomingGames] = await Promise.all([
-          loadGames("cfb"),
-          fetchUpcomingCfbGames(8),
-        ]);
+        const [historicalGames, schedule] = await Promise.all([loadGames("cfb"), fetchUpcomingCfbGames(8)]);
+        const { games: upcomingGames, currentWeek } = schedule;
+
+        const retroCutoff = new Date();
+        retroCutoff.setDate(retroCutoff.getDate() - RETRO_LOOKBACK_DAYS);
+        const retroCutoffStr = retroCutoff.toISOString().slice(0, 10);
+        const retroGameIds = historicalGames
+          .filter((g) => g.gameId && g.date >= retroCutoffStr)
+          .map((g) => g.gameId!);
+
         const teamIds = upcomingGames.flatMap((g) => [g.homeTeamId, g.awayTeamId]).filter((id): id is string => id !== null);
-        const [oddsByEspnId, teamStatsByTeamId] = await Promise.all([
+        const [oddsByEspnId, teamStatsByTeamId, retroOddsByGameId] = await Promise.all([
           fetchOddsForGames(upcomingGames.map((g) => g.espnId)),
           fetchTeamStatsForIds(teamIds),
+          fetchOddsForGames(retroGameIds),
         ]);
         if (!cancelled) {
-          setSnapshot({ requestId, historicalGames, upcomingGames, oddsByEspnId, teamStatsByTeamId, error: null });
+          setSnapshot({
+            requestId,
+            historicalGames,
+            upcomingGames,
+            currentWeek,
+            oddsByEspnId,
+            teamStatsByTeamId,
+            retroOddsByGameId,
+            error: null,
+          });
         }
       } catch (e) {
         if (!cancelled) {
@@ -99,8 +135,10 @@ export function WeeklyEdges() {
             requestId,
             historicalGames: [],
             upcomingGames: [],
+            currentWeek: null,
             oddsByEspnId: new Map(),
             teamStatsByTeamId: new Map(),
+            retroOddsByGameId: new Map(),
             error: String(e),
           });
         }
@@ -163,6 +201,77 @@ export function WeeklyEdges() {
     const unavailableRows = rows.filter((r) => r.status === "no-odds" || r.status === "unmatched");
 
     return { edgeRows, flaggedRows, noEdgeRows, unavailableRows, gameCount: upcomingGames.length };
+  }, [snapshot, loading, currentBankroll, fractionalMultiplier]);
+
+  // "How would we have done?" — replays games already played in the last
+  // RETRO_LOOKBACK_DAYS days as if predicting them beforehand. The model is
+  // trained ONLY on games before that window (no leakage from the very
+  // outcomes being graded); Elo's pregame ratings are inherently leak-free
+  // already, since runElo only ever reads each team's rating as it stood
+  // immediately before that specific game.
+  const reportCard = useMemo(() => {
+    if (loading || !snapshot || snapshot.error) return null;
+    const { historicalGames, retroOddsByGameId } = snapshot;
+    if (historicalGames.length === 0) return null;
+
+    const retroCutoff = new Date();
+    retroCutoff.setDate(retroCutoff.getDate() - RETRO_LOOKBACK_DAYS);
+    const retroCutoffStr = retroCutoff.toISOString().slice(0, 10);
+
+    const { records } = runElo(historicalGames, DEFAULT_ELO_OPTIONS);
+    const priorRecords = records.filter((r) => r.date < retroCutoffStr);
+    const retroRecords = records.filter((r) => r.gameId && r.date >= retroCutoffStr);
+    if (priorRecords.length < 50 || retroRecords.length === 0) return null;
+
+    const model = trainLogisticRegression(
+      priorRecords.map((r) => [r.eloDiff]),
+      priorRecords.map((r) => r.homeWin),
+      { iterations: 300, learningRate: 0.5 },
+    );
+
+    const rows: RetroRow[] = retroRecords.map((record) => {
+      const pHome = predictProba(model, [record.eloDiff]);
+      const actualHomeWin = record.homeWin === 1;
+      const odds = record.gameId ? (retroOddsByGameId.get(record.gameId) ?? null) : null;
+      if (!odds || odds.homeMoneyline === null || odds.awayMoneyline === null) {
+        return { record, pHome, actualHomeWin, status: "no-odds" };
+      }
+      const pick = pickSide(pHome, odds.homeMoneyline, odds.awayMoneyline, record.homeTeam, record.awayTeam);
+      const classification = classifyPick(pick, currentBankroll, fractionalMultiplier);
+      if (classification.status === "no-edge") return { record, pHome, actualHomeWin, status: "no-edge" };
+      if (classification.status === "flagged") return { record, pHome, actualHomeWin, status: "flagged", pick };
+      const won = pick.side === "home" ? actualHomeWin : !actualHomeWin;
+      const profit = won ? classification.stake * pick.b : -classification.stake;
+      return { record, pHome, actualHomeWin, status: "edge", pick, stake: classification.stake, won, profit };
+    });
+
+    const graded = rows.filter((r): r is Extract<RetroRow, { status: "edge" }> => r.status === "edge");
+    const wins = graded.filter((r) => r.won).length;
+    const totalProfit = graded.reduce((s, r) => s + r.profit, 0);
+    const totalStaked = graded.reduce((s, r) => s + r.stake, 0);
+
+    // Overall calibration across EVERY completed game this window, not just
+    // recommended ones — the honest self-check ("if it says 65%, did that
+    // side really win about 65% of the time?") independent of betting at all.
+    const allPredictions = rows.map((r) => r.pHome);
+    const allOutcomes = rows.map((r) => (r.actualHomeWin ? 1 : 0));
+    const brier = brierScore(allPredictions, allOutcomes);
+    const accuratePicks = rows.filter((r) => (r.pHome >= 0.5) === r.actualHomeWin).length;
+
+    rows.sort((a, b) => new Date(b.record.date).getTime() - new Date(a.record.date).getTime());
+
+    return {
+      rows,
+      gameCount: rows.length,
+      edgeCount: graded.length,
+      wins,
+      losses: graded.length - wins,
+      totalProfit,
+      totalStaked,
+      brier,
+      accuracy: rows.length > 0 ? accuratePicks / rows.length : 0,
+      windowStart: retroCutoffStr,
+    };
   }, [snapshot, loading, currentBankroll, fractionalMultiplier]);
 
   return (
@@ -264,8 +373,13 @@ export function WeeklyEdges() {
                   b: row.pick.b.toFixed(4),
                   stake: row.stake.toFixed(0),
                 }).toString();
-                const homeStatsLine = formatTeamStatsLine(snapshot?.teamStatsByTeamId.get(row.game.homeTeamId ?? ""));
-                const awayStatsLine = formatTeamStatsLine(snapshot?.teamStatsByTeamId.get(row.game.awayTeamId ?? ""));
+                const homeStats = snapshot?.teamStatsByTeamId.get(row.game.homeTeamId ?? "");
+                const awayStats = snapshot?.teamStatsByTeamId.get(row.game.awayTeamId ?? "");
+                const homeStatsLine = formatTeamStatsLine(homeStats);
+                const awayStatsLine = formatTeamStatsLine(awayStats);
+                const statsAreStale =
+                  isStaleSeasonStats(homeStats ?? null, snapshot?.currentWeek ?? null) ||
+                  isStaleSeasonStats(awayStats ?? null, snapshot?.currentWeek ?? null);
                 return (
                   <div
                     key={row.game.espnId}
@@ -282,9 +396,12 @@ export function WeeklyEdges() {
                         </div>
                         {(homeStatsLine || awayStatsLine) && (
                           <div className="mt-1 text-xs" style={{ color: "var(--text-muted)" }}>
-                            <strong style={{ color: "var(--text-secondary)" }}>Season so far:</strong>{" "}
+                            <strong style={{ color: "var(--text-secondary)" }}>
+                              {statsAreStale ? "Last season (final):" : "Season so far:"}
+                            </strong>{" "}
                             {row.game.awayTeam} {awayStatsLine ?? "no stats yet"} · {row.game.homeTeam}{" "}
                             {homeStatsLine ?? "no stats yet"}
+                            {statsAreStale && " — too early in the new season for ESPN to have current stats"}
                           </div>
                         )}
                       </div>
@@ -366,6 +483,78 @@ export function WeeklyEdges() {
             </details>
           )}
         </>
+      )}
+
+      {reportCard && (
+        <div className="rounded-lg border p-4" style={{ background: "var(--card-bg)", borderColor: "var(--card-border)" }}>
+          <h2 className="mb-1 text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
+            How would we have done? — last {RETRO_LOOKBACK_DAYS} days
+          </h2>
+          <p className="mb-3 text-xs" style={{ color: "var(--text-muted)" }}>
+            Replays the {reportCard.gameCount} completed game{reportCard.gameCount === 1 ? "" : "s"} since{" "}
+            {reportCard.windowStart} exactly like a real bet would have gone: the model here was trained ONLY on
+            games before that date (it never saw these outcomes), then scored against the closing odds and the
+            actual final score. This is the honest test — not a promise the next window looks the same.
+          </p>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <StatTile label="Model accuracy" value={`${(reportCard.accuracy * 100).toFixed(0)}%`} sub={`${reportCard.gameCount} games, picking the side it favored`} />
+            <StatTile label="Brier score" value={reportCard.brier.toFixed(4)} sub="lower is better; 0 = perfect" />
+            <StatTile
+              label="Recommended-edge record"
+              value={reportCard.edgeCount > 0 ? `${reportCard.wins}-${reportCard.losses}` : "no edges found"}
+              sub={`${reportCard.edgeCount} game${reportCard.edgeCount === 1 ? "" : "s"} would've been flagged as a bet`}
+            />
+            <StatTile
+              label="Would-be P&L"
+              value={reportCard.edgeCount > 0 ? currency(reportCard.totalProfit) : "$0"}
+              sub={reportCard.edgeCount > 0 ? `on ${currency(reportCard.totalStaked)} staked` : "nothing recommended"}
+              accent={reportCard.edgeCount > 0 ? (reportCard.totalProfit >= 0 ? "good" : "critical") : undefined}
+            />
+          </div>
+
+          <details className="mt-3">
+            <summary className="cursor-pointer text-xs" style={{ color: "var(--text-secondary)" }}>
+              Game-by-game breakdown
+            </summary>
+            <div className="mt-2 flex flex-col gap-1.5 text-xs">
+              {reportCard.rows.map((row) => {
+                const predictedHome = row.pHome >= 0.5;
+                const correct = predictedHome === row.actualHomeWin;
+                return (
+                  <div
+                    key={row.record.gameId ?? `${row.record.homeTeam}-${row.record.date}`}
+                    className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 rounded-md border px-2 py-1.5"
+                    style={{ borderColor: "var(--card-border)" }}
+                  >
+                    <span style={{ color: "var(--text-secondary)" }}>
+                      {row.record.awayTeam} at {row.record.homeTeam} — model{" "}
+                      {(predictedHome ? row.pHome : 1 - row.pHome) * 100 | 0}%{" "}
+                      {predictedHome ? row.record.homeTeam : row.record.awayTeam}, actual winner:{" "}
+                      {row.actualHomeWin ? row.record.homeTeam : row.record.awayTeam}
+                    </span>
+                    <span
+                      className="rounded-full px-2 py-0.5 font-medium"
+                      style={{
+                        color: "white",
+                        background: correct ? "var(--status-good)" : "var(--status-critical)",
+                      }}
+                    >
+                      {correct ? "called it" : "missed"}
+                    </span>
+                    {row.status === "edge" && (
+                      <span style={{ color: row.won ? "var(--status-good)" : "var(--status-critical)" }}>
+                        would&apos;ve bet {row.pick.team} {formatMoneyline(row.pick.moneyline)} for{" "}
+                        {currency(row.stake)} — {row.won ? `won ${currency(row.profit)}` : `lost ${currency(-row.profit)}`}
+                      </span>
+                    )}
+                    {row.status === "flagged" && <span style={{ color: "var(--text-muted)" }}>flagged, not bet</span>}
+                    {row.status === "no-odds" && <span style={{ color: "var(--text-muted)" }}>no odds available</span>}
+                  </div>
+                );
+              })}
+            </div>
+          </details>
+        </div>
       )}
 
       <p className="text-xs" style={{ color: "var(--text-muted)" }}>

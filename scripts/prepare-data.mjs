@@ -83,8 +83,10 @@ function isNum(v) {
 /**
  * Compact schema: [gameId, date, season, homeTeam, awayTeam, homeScore, awayScore, neutral]
  * gameId is nflverse's own id (e.g. "2024_01_KC_BAL") for NFL, joining to
- * nfl-team-stats.json; CFB has no equivalent per-game stats archive, so it's
- * always null there.
+ * nfl-team-stats.json. For CFB it's cfbfastR's game_id, which is actually
+ * ESPN's own numeric event id — useful for joining a completed historical
+ * game directly to ESPN's odds/summary endpoint, but there's no per-game
+ * box-score stats archive to join it to the way there is for NFL.
  */
 const SCHEMA = ["gameId", "date", "season", "homeTeam", "awayTeam", "homeScore", "awayScore", "neutral"];
 
@@ -108,25 +110,43 @@ async function prepareNfl() {
   return { schema: SCHEMA, games };
 }
 
+// cfbfastR-data's old single-file archive (schedules/cfb_games_info.csv) was
+// abandoned after the 2020 season — using it silently trained the model on
+// five-year-stale rosters and conference alignments. schedules/csv/ is the
+// maintained replacement: one file per season, updated through the current
+// one (including already-played games from the current week).
+const CFB_SEASONS = Array.from({ length: 2026 - 2001 + 1 }, (_, i) => 2001 + i);
+
 async function prepareCfb() {
   console.log("Fetching CFB games...");
-  const rows = await fetchCsv(
-    "https://raw.githubusercontent.com/sportsdataverse/cfbfastR-data/main/schedules/cfb_games_info.csv",
-    "latin1",
-  );
-  const games = rows
-    .filter((r) => isNum(r.home_points) && isNum(r.away_points) && r.start_date)
-    .map((r) => [
-      null,
-      r.start_date.slice(0, 10),
-      Number(r.season),
-      r.home_team,
-      r.away_team,
-      Number(r.home_points),
-      Number(r.away_points),
-      r.neutral_site === "TRUE",
-    ])
-    .sort((a, b) => (a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0));
+  const games = [];
+  for (const season of CFB_SEASONS) {
+    const url = `https://raw.githubusercontent.com/sportsdataverse/cfbfastR-data/main/schedules/csv/cfb_schedules_${season}.csv`;
+    let rows;
+    try {
+      // Unlike the old abandoned cfb_games_info.csv (Latin-1), this
+      // per-season replacement is UTF-8 — confirmed by inspecting the raw
+      // bytes for "José" (0xC3 0xA9, the UTF-8 sequence, not Latin-1's 0xE9).
+      rows = await fetchCsv(url);
+    } catch {
+      console.log(`  skipping ${season} (not available)`);
+      continue;
+    }
+    for (const r of rows) {
+      if (r.completed !== "TRUE" || !isNum(r.home_points) || !isNum(r.away_points) || !r.start_date) continue;
+      games.push([
+        r.game_id || null,
+        r.start_date.slice(0, 10),
+        Number(r.season),
+        r.home_team,
+        r.away_team,
+        Number(r.home_points),
+        Number(r.away_points),
+        r.neutral_site === "TRUE",
+      ]);
+    }
+  }
+  games.sort((a, b) => (a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0));
   console.log(`  ${games.length} completed games`);
   return { schema: SCHEMA, games };
 }

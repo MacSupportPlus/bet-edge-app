@@ -331,7 +331,18 @@ export function Guide() {
             is informational only: college football doesn&apos;t have a public archive of these
             stats going back years the way the NFL does, so unlike Elo, it isn&apos;t something
             the model has learned from and isn&apos;t part of how the pick or stake gets
-            calculated.
+            calculated. Very early in a season, ESPN sometimes hasn&apos;t updated its own numbers
+            yet and quietly hands back last season&apos;s final stats instead — when that&apos;s
+            detected, the label switches to &quot;Last season (final)&quot; so you&apos;re never
+            looking at stale numbers labeled as current.
+          </Field>
+          <Field term="How would we have done?">
+            A report card at the bottom of the page: it replays every game finished in the last 10
+            days as if it had been predicted beforehand — using a model trained only on games
+            before that window, so it never saw those results — then checks the pick against what
+            actually happened. It&apos;s the closest thing to proof this app has: not &quot;trust
+            the model,&quot; but &quot;here&apos;s exactly how it did on real, already-decided
+            games,&quot; refreshed automatically as more games finish each week.
           </Field>
         </dl>
 
@@ -531,6 +542,14 @@ export function Guide() {
           <Field term="Elo K-factor / home advantage">
             Tuning knobs for the underlying team-strength ratings. Higher K-factor makes ratings
             react faster to recent results; you can usually leave these at their defaults.
+          </Field>
+          <Field term="Season regression">
+            Pulls every team&apos;s rating partway back toward average the first time it plays in a
+            new season, to account for roster turnover between seasons — especially relevant for
+            college football, where rosters change far more than the pros. Defaults to 35%, which
+            measured best overall on real history. It is a general accuracy tune, not specifically
+            an opening-week fix — the very earliest games of a season actually calibrate a touch
+            worse as this goes up, even though the season overall gets more accurate.
           </Field>
           <Field term="&quot;vs. Elo-only&quot; (NFL only)">
             On NFL, the model also factors in each team&apos;s season-to-date total yards,

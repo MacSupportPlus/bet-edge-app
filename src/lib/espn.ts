@@ -21,6 +21,8 @@ export interface TeamSeasonStats {
   pointsPerGame: number | null;
   yardsPerGame: number | null;
   turnoverMargin: number | null;
+  /** Games counted in these totals — used to detect ESPN silently falling back to last season's final stats before this season has enough games played (see `isStaleSeasonStats`). */
+  gamesPlayed: number | null;
 }
 
 export interface GameOdds {
@@ -143,7 +145,21 @@ export function parseTeamStatistics(data: unknown): TeamSeasonStats | null {
     pointsPerGame: findStatValue(categories, "totalPointsPerGame"),
     yardsPerGame: findStatValue(categories, "yardsPerGame"),
     turnoverMargin: findStatValue(categories, "turnOverDifferential"),
+    gamesPlayed: findStatValue(categories, "gamesPlayed"),
   };
+}
+
+/**
+ * ESPN's team-statistics endpoint has no explicit "which season is this"
+ * field, and early in a new season (before it has real current-season data)
+ * it silently falls back to last season's final numbers instead of erroring
+ * — confirmed by hitting it in week 1 of the 2026 season and getting back
+ * "gamesPlayed: 12" from 2025. A team genuinely can't have played more games
+ * than weeks have elapsed this season, so that mismatch is the tell.
+ */
+export function isStaleSeasonStats(stats: TeamSeasonStats | null, currentWeek: number | null): boolean {
+  if (!stats || stats.gamesPlayed === null || currentWeek === null) return false;
+  return stats.gamesPlayed > currentWeek + 1;
 }
 
 export async function fetchTeamStatistics(teamId: string): Promise<TeamSeasonStats | null> {
@@ -169,8 +185,14 @@ export async function fetchTeamStatsForIds(
   return new Map(uniqueIds.map((id, i) => [id, results[i]]));
 }
 
-/** Upcoming FBS games from today through `daysAhead` days out. */
-export async function fetchUpcomingCfbGames(daysAhead = 8): Promise<UpcomingGame[]> {
+export interface UpcomingCfbSchedule {
+  games: UpcomingGame[];
+  /** The current CFB week number per ESPN, or null if it wasn't in the response. Used to detect stale season stats — see `isStaleSeasonStats`. */
+  currentWeek: number | null;
+}
+
+/** Upcoming FBS games from today through `daysAhead` days out, plus the current week number. */
+export async function fetchUpcomingCfbGames(daysAhead = 8): Promise<UpcomingCfbSchedule> {
   const today = new Date();
   const end = new Date(today);
   end.setDate(end.getDate() + daysAhead);
@@ -180,7 +202,9 @@ export async function fetchUpcomingCfbGames(daysAhead = 8): Promise<UpcomingGame
   if (!res.ok) throw new Error(`ESPN scoreboard request failed: ${res.status}`);
   const data = await res.json();
   const events: unknown[] = Array.isArray(data.events) ? data.events : [];
-  return events.map(parseScoreboardEvent).filter((g): g is UpcomingGame => g !== null);
+  const games = events.map(parseScoreboardEvent).filter((g): g is UpcomingGame => g !== null);
+  const currentWeek = typeof data.week?.number === "number" ? data.week.number : null;
+  return { games, currentWeek };
 }
 
 export async function fetchGameOdds(espnId: string): Promise<GameOdds | null> {

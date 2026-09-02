@@ -43,6 +43,7 @@ export function ProbabilityModel() {
 
   const [kFactor, setKFactor] = useState(20);
   const [homeAdvantage, setHomeAdvantage] = useState(65);
+  const [seasonRegressionPercent, setSeasonRegressionPercent] = useState(35);
   const [startingBankroll, setStartingBankroll] = useState(10000);
 
   useEffect(() => {
@@ -67,8 +68,8 @@ export function ProbabilityModel() {
   const error = fetchResult.dataset === dataset ? fetchResult.error : null;
 
   const eloOptions: EloOptions = useMemo(
-    () => ({ kFactor, initialRating: 1500, homeAdvantage }),
-    [kFactor, homeAdvantage],
+    () => ({ kFactor, initialRating: 1500, homeAdvantage, seasonRegression: seasonRegressionPercent / 100 }),
+    [kFactor, homeAdvantage, seasonRegressionPercent],
   );
 
   const analysis = useMemo(() => {
@@ -232,6 +233,18 @@ export function ProbabilityModel() {
               />
             </label>
             <label className="flex flex-col gap-1 text-sm">
+              <span style={{ color: "var(--text-secondary)" }}>Season regression (%)</span>
+              <input
+                type="number"
+                min={0}
+                max={100}
+                value={seasonRegressionPercent}
+                onChange={(e) => setSeasonRegressionPercent(Math.min(100, Math.max(0, Number(e.target.value))))}
+                className="rounded-md border px-2 py-1.5 tabular-nums"
+                style={{ borderColor: "var(--card-border)", color: "var(--text-primary)" }}
+              />
+            </label>
+            <label className="flex flex-col gap-1 text-sm">
               <span style={{ color: "var(--text-secondary)" }}>Backtest starting bankroll</span>
               <input
                 type="number"
@@ -249,7 +262,14 @@ export function ProbabilityModel() {
             <strong style={{ color: "var(--text-secondary)" }}>What these boxes do:</strong>{" "}
             &quot;K-factor&quot; controls how fast a team&apos;s rating reacts to a surprising
             result — higher means one upset moves it more. &quot;Home advantage&quot; is how many
-            rating points a team gets just for playing at home. Changing either one retrains the
+            rating points a team gets just for playing at home. &quot;Season regression&quot; pulls
+            every team&apos;s rating partway back toward average the first time it plays in a new
+            season, to account for roster turnover — set to 0 to carry last season&apos;s exact
+            rating forward untouched, 100 to reset everyone to average every season. Measured on
+            real history, 35% gives college football its best overall accuracy (about 3-4% lower
+            Brier score) — but it&apos;s a general tune, not specifically an opening-week fix: the
+            earliest games of a season actually calibrate very slightly worse as this goes up, even
+            though the season as a whole gets more accurate. Changing any of these retrains the
             model from scratch and every chart and number below updates for the new settings.
           </p>
 
