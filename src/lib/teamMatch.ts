@@ -21,11 +21,17 @@ export function normalizeTeamName(name: string): string {
 }
 
 /**
- * ESPN's `location` field -> our historical dataset's team-name string,
- * for the specific mismatches found by comparing a real week of ESPN
- * scoreboard data against public/data/cfb-games.json (verified by hand,
- * not guessed): renamed schools, abbreviation-vs-full-name differences,
+ * ESPN's team name/abbreviation -> our historical dataset's team-name
+ * string, for the specific mismatches found by hand (not guessed).
+ *
+ * CFB entries key off ESPN's `location` field (both datasets use full
+ * school names): renamed schools, abbreviation-vs-full-name differences,
  * and a couple of long-form vs. short-form conference names.
+ *
+ * NFL entries key off ESPN's `abbreviation` field instead (both datasets
+ * use nflverse-style short codes, which match exactly for 30 of 32 teams —
+ * these two are ESPN's real divergences: it uses "LAR"/"WSH" where
+ * nflverse uses "LA"/"WAS").
  */
 export const ESPN_TEAM_ALIASES: Record<string, string> = {
   "App State": "Appalachian State",
@@ -36,6 +42,8 @@ export const ESPN_TEAM_ALIASES: Record<string, string> = {
   UTSA: "UT San Antonio",
   UConn: "Connecticut",
   "UL Monroe": "Louisiana Monroe",
+  LAR: "LA",
+  WSH: "WAS",
 };
 
 /**

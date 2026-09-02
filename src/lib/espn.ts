@@ -7,11 +7,31 @@
 
 import { mapWithConcurrency } from "./concurrency";
 
+export type Sport = "cfb" | "nfl";
+
+const ESPN_SPORT_PATH: Record<Sport, string> = {
+  cfb: "college-football",
+  nfl: "nfl",
+};
+
+function scoreboardUrl(sport: Sport): string {
+  return `https://site.api.espn.com/apis/site/v2/sports/football/${ESPN_SPORT_PATH[sport]}/scoreboard`;
+}
+function summaryUrl(sport: Sport): string {
+  return `https://site.api.espn.com/apis/site/v2/sports/football/${ESPN_SPORT_PATH[sport]}/summary`;
+}
+function teamsUrl(sport: Sport): string {
+  return `https://site.api.espn.com/apis/site/v2/sports/football/${ESPN_SPORT_PATH[sport]}/teams`;
+}
+
 export interface UpcomingGame {
   espnId: string;
   date: string; // ISO datetime
-  homeTeam: string; // ESPN's "location" field, e.g. "Ohio State"
+  homeTeam: string; // ESPN's "location" field, e.g. "Ohio State" (CFB) or "Seattle" (NFL) — for display.
   awayTeam: string;
+  /** ESPN's "abbreviation" field, e.g. "SEA" — NFL's dataset match key (see ESPN_TEAM_ALIASES); unused for CFB. */
+  homeTeamAbbr: string | null;
+  awayTeamAbbr: string | null;
   homeTeamId: string | null;
   awayTeamId: string | null;
   neutralSite: boolean;
@@ -53,7 +73,7 @@ export function toEspnDate(d: Date): string {
 
 interface EspnCompetitor {
   homeAway: string;
-  team?: { id?: string; location?: string };
+  team?: { id?: string; location?: string; abbreviation?: string };
 }
 
 interface EspnScoreboardEvent {
@@ -74,6 +94,8 @@ export function parseScoreboardEvent(event: unknown): UpcomingGame | null {
     date: e.date,
     homeTeam: home.team.location,
     awayTeam: away.team.location,
+    homeTeamAbbr: home.team.abbreviation ?? null,
+    awayTeamAbbr: away.team.abbreviation ?? null,
     homeTeamId: home.team.id ?? null,
     awayTeamId: away.team.id ?? null,
     neutralSite: Boolean(comp?.neutralSite),
@@ -104,10 +126,6 @@ export function parseOddsSummary(summary: unknown): GameOdds | null {
     spread: typeof entry.spread === "number" ? entry.spread : null,
   };
 }
-
-const SCOREBOARD_URL = "https://site.api.espn.com/apis/site/v2/sports/football/college-football/scoreboard";
-const SUMMARY_URL = "https://site.api.espn.com/apis/site/v2/sports/football/college-football/summary";
-const TEAM_STATS_URL = "https://site.api.espn.com/apis/site/v2/sports/football/college-football/teams";
 
 interface EspnStatEntry {
   name?: string;
@@ -162,8 +180,8 @@ export function isStaleSeasonStats(stats: TeamSeasonStats | null, currentWeek: n
   return stats.gamesPlayed > currentWeek + 1;
 }
 
-export async function fetchTeamStatistics(teamId: string): Promise<TeamSeasonStats | null> {
-  const res = await fetch(`${TEAM_STATS_URL}/${teamId}/statistics`);
+export async function fetchTeamStatistics(sport: Sport, teamId: string): Promise<TeamSeasonStats | null> {
+  const res = await fetch(`${teamsUrl(sport)}/${teamId}/statistics`);
   if (!res.ok) return null;
   const data = await res.json();
   return parseTeamStatistics(data);
@@ -171,13 +189,14 @@ export async function fetchTeamStatistics(teamId: string): Promise<TeamSeasonSta
 
 /** Fetches season stats for many teams without firing them all at ESPN at once. Deduplicates ids first. */
 export async function fetchTeamStatsForIds(
+  sport: Sport,
   teamIds: string[],
   concurrency = 8,
 ): Promise<Map<string, TeamSeasonStats | null>> {
   const uniqueIds = [...new Set(teamIds)];
   const results = await mapWithConcurrency(uniqueIds, concurrency, async (id) => {
     try {
-      return await fetchTeamStatistics(id);
+      return await fetchTeamStatistics(sport, id);
     } catch {
       return null;
     }
@@ -185,18 +204,19 @@ export async function fetchTeamStatsForIds(
   return new Map(uniqueIds.map((id, i) => [id, results[i]]));
 }
 
-export interface UpcomingCfbSchedule {
+export interface UpcomingSchedule {
   games: UpcomingGame[];
-  /** The current CFB week number per ESPN, or null if it wasn't in the response. Used to detect stale season stats — see `isStaleSeasonStats`. */
+  /** The current week number per ESPN, or null if it wasn't in the response. Used to detect stale season stats — see `isStaleSeasonStats`. */
   currentWeek: number | null;
 }
 
-/** Upcoming FBS games from today through `daysAhead` days out, plus the current week number. */
-export async function fetchUpcomingCfbGames(daysAhead = 8): Promise<UpcomingCfbSchedule> {
+/** Upcoming games from today through `daysAhead` days out, plus the current week number. `groups=80` (FBS) only applies to CFB — NFL has no such split. */
+export async function fetchUpcomingGames(sport: Sport, daysAhead = 8): Promise<UpcomingSchedule> {
   const today = new Date();
   const end = new Date(today);
   end.setDate(end.getDate() + daysAhead);
-  const url = `${SCOREBOARD_URL}?groups=80&limit=400&dates=${toEspnDate(today)}-${toEspnDate(end)}`;
+  const groupParam = sport === "cfb" ? "&groups=80" : "";
+  const url = `${scoreboardUrl(sport)}?limit=400${groupParam}&dates=${toEspnDate(today)}-${toEspnDate(end)}`;
 
   const res = await fetch(url);
   if (!res.ok) throw new Error(`ESPN scoreboard request failed: ${res.status}`);
@@ -207,8 +227,8 @@ export async function fetchUpcomingCfbGames(daysAhead = 8): Promise<UpcomingCfbS
   return { games, currentWeek };
 }
 
-export async function fetchGameOdds(espnId: string): Promise<GameOdds | null> {
-  const res = await fetch(`${SUMMARY_URL}?event=${espnId}`);
+export async function fetchGameOdds(sport: Sport, espnId: string): Promise<GameOdds | null> {
+  const res = await fetch(`${summaryUrl(sport)}?event=${espnId}`);
   if (!res.ok) return null;
   const data = await res.json();
   return parseOddsSummary(data);
@@ -216,12 +236,13 @@ export async function fetchGameOdds(espnId: string): Promise<GameOdds | null> {
 
 /** Fetches odds for many games without firing them all at ESPN at once. */
 export async function fetchOddsForGames(
+  sport: Sport,
   espnIds: string[],
   concurrency = 8,
 ): Promise<Map<string, GameOdds | null>> {
   const results = await mapWithConcurrency(espnIds, concurrency, async (id) => {
     try {
-      return await fetchGameOdds(id);
+      return await fetchGameOdds(sport, id);
     } catch {
       return null;
     }

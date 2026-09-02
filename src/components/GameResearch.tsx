@@ -58,7 +58,7 @@ export function GameResearch() {
   useEffect(() => {
     if (!espnId) return;
     let cancelled = false;
-    fetchGameOdds(espnId)
+    fetchGameOdds(dataset, espnId)
       .then((odds) => {
         if (!cancelled) setOddsResult({ espnId, odds });
       })
@@ -68,7 +68,7 @@ export function GameResearch() {
     return () => {
       cancelled = true;
     };
-  }, [espnId]);
+  }, [dataset, espnId]);
   const odds = oddsResult?.espnId === espnId ? oddsResult.odds : null;
 
   // fetchResult's initial `dataset` value matches the default dataset, so a

@@ -63,27 +63,29 @@ describe("parseScoreboardEvent", () => {
       {
         neutralSite: false,
         competitors: [
-          { homeAway: "home", team: { id: "30", location: "USC" } },
-          { homeAway: "away", team: { id: "23", location: "San José State" } },
+          { homeAway: "home", team: { id: "30", location: "USC", abbreviation: "USC" } },
+          { homeAway: "away", team: { id: "23", location: "San José State", abbreviation: "SJSU" } },
         ],
       },
     ],
   };
 
-  it("extracts home/away team, ids, and neutral-site flag", () => {
+  it("extracts home/away team, abbreviations, ids, and neutral-site flag", () => {
     const result = parseScoreboardEvent(validEvent);
     expect(result).toEqual({
       espnId: "401864494",
       date: "2026-08-29T19:00Z",
       homeTeam: "USC",
       awayTeam: "San José State",
+      homeTeamAbbr: "USC",
+      awayTeamAbbr: "SJSU",
       homeTeamId: "30",
       awayTeamId: "23",
       neutralSite: false,
     });
   });
 
-  it("falls back to null team ids when ESPN omits them", () => {
+  it("falls back to null team ids and abbreviations when ESPN omits them", () => {
     const result = parseScoreboardEvent({
       id: "1",
       date: "x",
@@ -98,6 +100,8 @@ describe("parseScoreboardEvent", () => {
     });
     expect(result?.homeTeamId).toBeNull();
     expect(result?.awayTeamId).toBeNull();
+    expect(result?.homeTeamAbbr).toBeNull();
+    expect(result?.awayTeamAbbr).toBeNull();
   });
 
   it("returns null for malformed/missing data instead of throwing", () => {

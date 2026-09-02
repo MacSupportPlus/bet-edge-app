@@ -51,4 +51,11 @@ describe("matchTeamName", () => {
     expect(matchTeamName("West Georgia", known)).toBeNull();
     expect(matchTeamName("Some Random FCS School", known)).toBeNull();
   });
+
+  it("resolves NFL's two abbreviation mismatches (LAR/WSH vs. nflverse's LA/WAS)", () => {
+    const nflKnown = new Set(["LA", "WAS", "SEA", "KC"]);
+    expect(matchTeamName("LAR", nflKnown)).toBe("LA");
+    expect(matchTeamName("WSH", nflKnown)).toBe("WAS");
+    expect(matchTeamName("SEA", nflKnown)).toBe("SEA");
+  });
 });

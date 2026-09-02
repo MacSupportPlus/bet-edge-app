@@ -21,7 +21,7 @@ export function NavBar() {
       style={{ borderColor: "var(--card-border)", background: "var(--card-bg)" }}
     >
       {LINKS.map((link) => {
-        const active = pathname === link.href;
+        const active = link.href === "/" ? pathname === "/" : pathname === link.href || pathname.startsWith(`${link.href}/`);
         return (
           <Link
             key={link.href}

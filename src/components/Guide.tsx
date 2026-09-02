@@ -131,9 +131,10 @@ export function Guide() {
           </Step>
         </ChecklistGroup>
 
-        <ChecklistGroup title="Part 2 — Whenever you want to find a bet this week (college football)">
+        <ChecklistGroup title="Part 2 — Whenever you want to find a bet this week">
           <Step n={1}>
-            Click the <strong style={{ color: "var(--text-primary)" }}>This Week</strong> tab.
+            Click the <strong style={{ color: "var(--text-primary)" }}>This Week</strong> tab, then
+            pick a sport (college football or NFL).
           </Step>
           <Step n={2}>
             Wait a few seconds. You&apos;ll see a message saying it&apos;s fetching this
@@ -272,7 +273,7 @@ export function Guide() {
           </li>
         </ol>
         <Callout kind="tip">
-          For college football specifically, the{" "}
+          For NFL or college football specifically, the{" "}
           <Link href="/this-week" className="underline">
             This Week
           </Link>{" "}
@@ -283,18 +284,22 @@ export function Guide() {
         </Callout>
       </Section>
 
-      <Section id="this-week" title="This Week (automated, college football)">
+      <Section id="this-week" title="This Week (automated, NFL &amp; college football)">
         <p style={{ color: "var(--text-secondary)" }}>
-          Does steps 1 and 2 of the big picture above for you: it pulls this week&apos;s upcoming
-          FBS games and live odds automatically, runs each one through the same Elo + probability
-          model as the Model tab, and surfaces only the games worth a second look — sized against
-          your current bankroll from the Tracker. This is the tab built specifically so you have
-          less to type and fewer chances to make a manual-entry mistake.
+          Pick a sport, and it does steps 1 and 2 of the big picture above for you: pulls this
+          week&apos;s upcoming games and live odds automatically, runs each one through the same
+          probability model as the Model tab (NFL includes real team-stat features; college
+          football is Elo-only — see below), and surfaces only the games worth a second look —
+          sized against your current bankroll from the Tracker. This is the tab built specifically
+          so you have less to type and fewer chances to make a manual-entry mistake.
         </p>
 
         <SubHeading>How to use it</SubHeading>
         <ol className="flex flex-col gap-1 pl-5" style={{ color: "var(--text-secondary)" }}>
-          <li className="list-decimal">Open the tab — it loads this week&apos;s schedule and odds on its own.</li>
+          <li className="list-decimal">
+            Open the This Week tab, pick NFL or college football — it loads that week&apos;s
+            schedule and odds on its own.
+          </li>
           <li className="list-decimal">
             Pick a stake-sizing rule (defaults to ½ Kelly) if you want something other than the
             default.
@@ -328,14 +333,14 @@ export function Guide() {
           </Field>
           <Field term="Season so far">
             Each card also shows both teams&apos; current-season points/game, yards/game, and
-            turnover margin, pulled live from ESPN — just for your own read on the matchup. This
-            is informational only: college football doesn&apos;t have a public archive of these
-            stats going back years the way the NFL does, so unlike Elo, it isn&apos;t something
-            the model has learned from and isn&apos;t part of how the pick or stake gets
-            calculated. Very early in a season, ESPN sometimes hasn&apos;t updated its own numbers
-            yet and quietly hands back last season&apos;s final stats instead — when that&apos;s
-            detected, the label switches to &quot;Last season (final)&quot; so you&apos;re never
-            looking at stale numbers labeled as current.
+            turnover margin — just for your own read on the matchup. For college football this
+            is pulled live from ESPN and is informational only (no historical archive exists to
+            train on, so it isn&apos;t part of the pick or stake); very early in a season ESPN
+            sometimes hasn&apos;t updated its own numbers yet and quietly hands back last
+            season&apos;s final stats instead, which gets detected and relabeled &quot;Last season
+            (final)&quot; so you&apos;re never looking at stale numbers labeled as current. For
+            NFL, these numbers come from the same archive the model actually trains on — so
+            what you see here is exactly what shaped the prediction, not a separate live read.
           </Field>
           <Field term="How would we have done?">
             A report card at the bottom of the page: it replays every game finished in the last 10
