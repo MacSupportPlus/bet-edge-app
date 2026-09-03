@@ -9,6 +9,7 @@ import { fetchGameOdds, GameOdds } from "@/lib/espn";
 import { currency } from "@/lib/format";
 import { loadGames } from "@/lib/loadGames";
 import { predictProba, sigmoid, trainLogisticRegression } from "@/lib/logisticRegression";
+import { FRACTIONAL_OPTIONS, formatMoneyline, parseMoneyline } from "@/lib/odds";
 import { headToHead, headToHeadRecord, seasonAverage, teamStatTrend } from "@/lib/research";
 import { classifyPick, MAX_TRUSTED_DISAGREEMENT, MAX_TRUSTED_RATIO, pickSide } from "@/lib/scanner";
 import { computeTeamStatDiffs, loadTeamStats, NEUTRAL_TEAM_STAT_FEATURES, TeamGameStat } from "@/lib/teamStats";
@@ -20,29 +21,12 @@ type Dataset = "nfl" | "cfb";
 
 const RECENT_GAMES_SHOWN = 8;
 
-const FRACTIONAL_OPTIONS = [
-  { label: "Full Kelly", value: 1 },
-  { label: "½ Kelly", value: 0.5 },
-  { label: "¼ Kelly", value: 0.25 },
-];
-
 function fmtDate(iso: string): string {
   try {
     return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "2-digit" });
   } catch {
     return iso;
   }
-}
-
-function formatMoneyline(ml: number): string {
-  return ml > 0 ? `+${ml}` : `${ml}`;
-}
-
-/** Parses a manual odds input; returns null for empty/invalid rather than NaN, so callers can tell "not entered" from "entered wrong". */
-function parseMoneyline(raw: string): number | null {
-  if (raw.trim() === "") return null;
-  const n = Number(raw);
-  return Number.isFinite(n) ? n : null;
 }
 
 export function GameResearch() {

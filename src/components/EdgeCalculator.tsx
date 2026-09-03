@@ -2,23 +2,21 @@
 
 import { useMemo, useState } from "react";
 import { recommendedStake, summarizeEdge } from "@/lib/edge";
+import { impliedProbability, moneylineToDecimalB } from "@/lib/espn";
 import { currency } from "@/lib/format";
+import { FRACTIONAL_OPTIONS, parseMoneyline } from "@/lib/odds";
 import { GrowthCurveChart } from "./GrowthCurveChart";
 import { StatTile } from "./StatTile";
-
-const FRACTIONAL_OPTIONS = [
-  { label: "Full Kelly", value: 1 },
-  { label: "½ Kelly", value: 0.5 },
-  { label: "¼ Kelly", value: 0.25 },
-];
 
 export function EdgeCalculator() {
   const [pPercent, setPPercent] = useState(55);
   const [b, setB] = useState(1);
+  const [moneylineInput, setMoneylineInput] = useState("");
   const [bankroll, setBankroll] = useState(10000);
   const [fractionalMultiplier, setFractionalMultiplier] = useState(0.5);
 
   const p = pPercent / 100;
+  const moneyline = parseMoneyline(moneylineInput);
 
   const summary = useMemo(() => summarizeEdge(p, b), [p, b]);
   const stake = useMemo(
@@ -41,10 +39,10 @@ export function EdgeCalculator() {
 
       {/* Inputs */}
       <div
-        className="grid grid-cols-1 gap-4 rounded-lg border p-4 sm:grid-cols-3"
+        className="grid grid-cols-1 gap-4 rounded-lg border p-4 sm:grid-cols-2 lg:grid-cols-4"
         style={{ background: "var(--card-bg)", borderColor: "var(--card-border)" }}
       >
-        <label className="flex flex-col gap-1 text-sm">
+        <label className="flex flex-col gap-1 text-sm sm:col-span-2 lg:col-span-2">
           <span style={{ color: "var(--text-secondary)" }}>Win probability (p)</span>
           <div className="flex items-center gap-2">
             <input
@@ -65,7 +63,7 @@ export function EdgeCalculator() {
           </div>
         </label>
 
-        <p className="text-xs sm:col-span-3" style={{ color: "var(--text-muted)" }}>
+        <p className="text-xs sm:col-span-2 lg:col-span-4" style={{ color: "var(--text-muted)" }}>
           <strong style={{ color: "var(--text-secondary)" }}>What this slider does:</strong> it
           sets how often you believe this bet actually wins. Right now it&apos;s set to{" "}
           <strong style={{ color: "var(--text-secondary)" }}>{pPercent.toFixed(0)} out of every
@@ -73,6 +71,29 @@ export function EdgeCalculator() {
           or right and every number on this page (and the chart below) recalculates instantly for
           the new value — nothing is saved until you change it again.
         </p>
+
+        <label className="flex flex-col gap-1 text-sm">
+          <span style={{ color: "var(--text-secondary)" }}>Moneyline (optional)</span>
+          <input
+            type="text"
+            inputMode="numeric"
+            placeholder="e.g. -150 or +130"
+            value={moneylineInput}
+            onChange={(e) => {
+              const raw = e.target.value;
+              setMoneylineInput(raw);
+              const ml = parseMoneyline(raw);
+              if (ml !== null) setB(moneylineToDecimalB(ml));
+            }}
+            className="rounded-md border px-2 py-1.5 tabular-nums"
+            style={{ borderColor: "var(--card-border)", color: "var(--text-primary)" }}
+          />
+          {moneyline !== null && (
+            <span style={{ color: "var(--text-muted)" }}>
+              Book implies {(impliedProbability(moneyline) * 100).toFixed(1)}% (incl. vig)
+            </span>
+          )}
+        </label>
 
         <label className="flex flex-col gap-1 text-sm">
           <span style={{ color: "var(--text-secondary)" }}>
@@ -83,10 +104,18 @@ export function EdgeCalculator() {
             min={0.01}
             step={0.05}
             value={b}
-            onChange={(e) => setB(Math.max(0.01, Number(e.target.value)))}
+            onChange={(e) => {
+              setB(Math.max(0.01, Number(e.target.value)));
+              setMoneylineInput("");
+            }}
             className="rounded-md border px-2 py-1.5 tabular-nums"
             style={{ borderColor: "var(--card-border)", color: "var(--text-primary)" }}
           />
+          {moneylineInput === "" && (
+            <span style={{ color: "var(--text-muted)" }}>
+              Type a moneyline above, or set this directly.
+            </span>
+          )}
         </label>
 
         <label className="flex flex-col gap-1 text-sm">

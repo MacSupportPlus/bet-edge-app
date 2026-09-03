@@ -18,6 +18,7 @@ import {
 import { currency } from "@/lib/format";
 import { loadGames } from "@/lib/loadGames";
 import { predictProba, trainLogisticRegression } from "@/lib/logisticRegression";
+import { FRACTIONAL_OPTIONS, formatMoneyline } from "@/lib/odds";
 import { headToHead, headToHeadRecord, seasonAverage, teamStatTrend } from "@/lib/research";
 import { classifyPick, MAX_TRUSTED_DISAGREEMENT, MAX_TRUSTED_RATIO, pickSide, PickResult } from "@/lib/scanner";
 import { matchTeamName } from "@/lib/teamMatch";
@@ -39,12 +40,6 @@ const SPORT_ELO_OPTIONS: Record<Sport, EloOptions> = {
   cfb: DEFAULT_ELO_OPTIONS,
   nfl: { ...DEFAULT_ELO_OPTIONS, seasonRegression: 0 },
 };
-
-const FRACTIONAL_OPTIONS = [
-  { label: "Full Kelly", value: 1 },
-  { label: "½ Kelly", value: 0.5 },
-  { label: "¼ Kelly", value: 0.25 },
-];
 
 interface Snapshot {
   requestId: number;
@@ -84,10 +79,6 @@ function formatKickoff(iso: string): string {
   } catch {
     return iso;
   }
-}
-
-function formatMoneyline(ml: number): string {
-  return ml > 0 ? `+${ml}` : `${ml}`;
 }
 
 /** Builds a link to the Game Research page for two historical-dataset team names. */
