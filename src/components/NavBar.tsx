@@ -11,6 +11,7 @@ const LINKS = [
   { href: "/tracker", label: "Bankroll Tracker" },
   { href: "/model", label: "Probability Model" },
   { href: "/research", label: "Research" },
+  { href: "/team", label: "Team" },
 ];
 
 export function NavBar() {

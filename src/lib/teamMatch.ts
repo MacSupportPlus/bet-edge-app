@@ -6,6 +6,8 @@
  * is worse than showing no prediction at all.
  */
 
+import { Sport, UpcomingGame } from "./espn";
+
 // Unicode "combining diacritical marks" block, written as an escape (not a
 // literal character) so this source file stays plain ASCII.
 const COMBINING_DIACRITICS = /[\u0300-\u036f]/g;
@@ -64,4 +66,12 @@ export function matchTeamName(espnName: string, knownTeams: ReadonlySet<string>)
   }
 
   return null;
+}
+
+/** The ESPN name to match against the historical dataset: NFL matches on abbreviation (e.g. "SEA"), CFB on the full school name. */
+export function matchKeyFor(sport: Sport, game: UpcomingGame, side: "home" | "away"): string {
+  if (sport === "nfl") {
+    return side === "home" ? (game.homeTeamAbbr ?? game.homeTeam) : (game.awayTeamAbbr ?? game.awayTeam);
+  }
+  return side === "home" ? game.homeTeam : game.awayTeam;
 }

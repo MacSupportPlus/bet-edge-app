@@ -21,8 +21,8 @@ import { predictProba, trainLogisticRegression } from "@/lib/logisticRegression"
 import { FRACTIONAL_OPTIONS, formatMoneyline, parseMoneyline } from "@/lib/odds";
 import { headToHead, headToHeadRecord, seasonAverage, teamStatTrend } from "@/lib/research";
 import { classifyPick, MAX_TRUSTED_DISAGREEMENT, MAX_TRUSTED_RATIO, pickSide, PickResult } from "@/lib/scanner";
-import { SPORT_ELO_OPTIONS, SPORT_LABELS } from "@/lib/sportConfig";
-import { matchTeamName } from "@/lib/teamMatch";
+import { SCHEDULE_LOOKAHEAD_DAYS, SPORT_ELO_OPTIONS, SPORT_LABELS } from "@/lib/sportConfig";
+import { matchKeyFor, matchTeamName } from "@/lib/teamMatch";
 import { computeTeamStatDiffs, loadTeamStats, NEUTRAL_TEAM_STAT_FEATURES, TeamGameStat } from "@/lib/teamStats";
 import { useLocalStorageState } from "@/lib/useLocalStorageState";
 import { Callout } from "./Callout";
@@ -30,9 +30,6 @@ import { StatTile } from "./StatTile";
 
 /** How far back "games already played this week" reaches — wide enough to cover a full game week for either sport. */
 const RETRO_LOOKBACK_DAYS = 10;
-
-/** How far ahead to look for upcoming games. NFL weeks run Thu-Mon (needs a wider window); CFB's are tighter. */
-const SCHEDULE_LOOKAHEAD_DAYS: Record<Sport, number> = { cfb: 8, nfl: 13 };
 
 interface Snapshot {
   requestId: number;
@@ -99,14 +96,6 @@ function formatTeamStatsLine(stats: TeamSeasonStats | null | undefined): string 
   if (stats.yardsPerGame !== null) parts.push(`${stats.yardsPerGame.toFixed(0)} ypg`);
   if (stats.turnoverMargin !== null) parts.push(`${stats.turnoverMargin >= 0 ? "+" : ""}${stats.turnoverMargin.toFixed(0)} TO`);
   return parts.length > 0 ? parts.join(" · ") : null;
-}
-
-/** The ESPN name to match against the historical dataset: NFL matches on abbreviation (e.g. "SEA"), CFB on the full school name. */
-function matchKeyFor(sport: Sport, game: UpcomingGame, side: "home" | "away"): string {
-  if (sport === "nfl") {
-    return side === "home" ? (game.homeTeamAbbr ?? game.homeTeam) : (game.awayTeamAbbr ?? game.awayTeam);
-  }
-  return side === "home" ? game.homeTeam : game.awayTeam;
 }
 
 const OTHER_SPORT: Record<Sport, Sport> = { cfb: "nfl", nfl: "cfb" };

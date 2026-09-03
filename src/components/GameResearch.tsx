@@ -321,6 +321,16 @@ export function GameResearch() {
           before trusting (or overriding) its number — rating trends, recent form, head-to-head
           history, and exactly how it arrived at its probability.
         </p>
+        <p className="mt-1 text-xs" style={{ color: "var(--text-muted)" }}>
+          Just want one team on its own?{" "}
+          <Link href={`/team?${new URLSearchParams({ sport: dataset, name: away }).toString()}`} className="underline" style={{ color: "var(--series-1)" }}>
+            {away} →
+          </Link>{" "}
+          ·{" "}
+          <Link href={`/team?${new URLSearchParams({ sport: dataset, name: home }).toString()}`} className="underline" style={{ color: "var(--series-1)" }}>
+            {home} →
+          </Link>
+        </p>
       </div>
 
       {loading && (
@@ -606,10 +616,10 @@ export function GameResearch() {
           {analysis.hasTeamStats && (analysis.homeStatTrend.length > 0 || analysis.awayStatTrend.length > 0) && (
             <div className="rounded-lg border p-4" style={{ background: "var(--card-bg)", borderColor: "var(--card-border)" }}>
               <h2 className="mb-1 text-sm font-medium" style={{ color: "var(--text-primary)" }}>
-                Team stat trends (NFL only)
+                Team stat trends
               </h2>
               <p className="mb-3 text-xs" style={{ color: "var(--text-muted)" }}>
-                Same stats the model trains on for NFL games — total yards, turnover margin, and
+                Same stats the model trains on — total yards, turnover margin, and (NFL only)
                 offensive efficiency (EPA), one point per game played.
               </p>
               {[
