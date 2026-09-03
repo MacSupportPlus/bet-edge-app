@@ -13,6 +13,9 @@ export interface BacktestRow {
   pHome: number;
   /** 1 if the home team actually won, 0 otherwise. */
   homeWin: 0 | 1;
+  /** Real per-game payout odds, when a historical market price is available for this game — falls back to the backtest's flat `b` when absent. */
+  homeB?: number;
+  awayB?: number;
 }
 
 export interface BacktestPoint {
@@ -37,10 +40,11 @@ const FRACTIONAL_MULTIPLIER: Record<BacktestStrategy, number> = {
 
 /**
  * Runs one strategy over the rows in order. Every row offers a bet on
- * whichever side (home or away) the model favors, at fixed odds `b` (e.g.
- * ~0.909 for standard -110 juice on both sides). A bet is only placed when
- * it has positive expectancy at those odds — same "no edge, no bet" rule as
- * the Phase 1 calculator.
+ * whichever side (home or away) the model favors, at that row's real payout
+ * odds when it carries `homeB`/`awayB` (a historical market price), or the
+ * flat `b` (e.g. ~0.909 for standard -110 juice) otherwise. A bet is only
+ * placed when it has positive expectancy at those odds — same "no edge, no
+ * bet" rule as the Phase 1 calculator.
  *
  * `maxStakeFraction` caps any single bet at that fraction of the CURRENT
  * bankroll, applied on top of the strategy's own sizing. This matters more
@@ -67,16 +71,18 @@ export function runBacktest(
   let maxDrawdown = 0;
 
   rows.forEach((row, i) => {
-    const pSide = row.pHome >= 0.5 ? row.pHome : 1 - row.pHome;
-    const won = row.pHome >= 0.5 ? row.homeWin === 1 : row.homeWin === 0;
-    const hasEdge = bankroll > 0 && expectancy(pSide, b) > 0;
+    const favoredHome = row.pHome >= 0.5;
+    const pSide = favoredHome ? row.pHome : 1 - row.pHome;
+    const bSide = (favoredHome ? row.homeB : row.awayB) ?? b;
+    const won = favoredHome ? row.homeWin === 1 : row.homeWin === 0;
+    const hasEdge = bankroll > 0 && expectancy(pSide, bSide) > 0;
 
     let stake = 0;
     if (hasEdge) {
       const desired =
         strategy === "flat"
           ? Math.min(flatFraction * startingBankroll, bankroll)
-          : recommendedStake(pSide, b, bankroll, FRACTIONAL_MULTIPLIER[strategy]);
+          : recommendedStake(pSide, bSide, bankroll, FRACTIONAL_MULTIPLIER[strategy]);
       stake = Math.min(desired, maxStakeFraction * bankroll);
     }
 
@@ -84,7 +90,7 @@ export function runBacktest(
       betsPlaced++;
       if (won) {
         betsWon++;
-        bankroll += stake * b;
+        bankroll += stake * bSide;
       } else {
         bankroll -= stake;
       }

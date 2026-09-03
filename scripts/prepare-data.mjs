@@ -16,6 +16,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import zlib from "node:zlib";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const OUT_DIR = path.join(__dirname, "..", "public", "data");
@@ -92,6 +93,9 @@ function isNum(v) {
  */
 const SCHEMA = ["gameId", "date", "season", "homeTeam", "awayTeam", "homeScore", "awayScore", "neutral"];
 
+/** Compact schema shared by both sports' market-odds files: [gameId, homeMoneyline, awayMoneyline] — real historical sportsbook prices for the Probability Model's backtest, replacing its synthetic -110-both-sides assumption wherever a real price is available. */
+const MARKET_ODDS_SCHEMA = ["gameId", "homeMoneyline", "awayMoneyline"];
+
 async function prepareNfl() {
   console.log("Fetching NFL games...");
   const rows = await fetchCsv("https://raw.githubusercontent.com/nflverse/nfldata/master/data/games.csv");
@@ -109,7 +113,15 @@ async function prepareNfl() {
     ])
     .sort((a, b) => (a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0));
   console.log(`  ${games.length} completed games`);
-  return { schema: SCHEMA, games };
+
+  // nflverse's games.csv already carries real closing moneylines per game —
+  // no extra fetch or matching needed, unlike CFB (see prepareCfbMarketOdds).
+  const marketOddsRows = rows
+    .filter((r) => isNum(r.home_score) && isNum(r.away_score) && isNum(r.home_moneyline) && isNum(r.away_moneyline))
+    .map((r) => [r.game_id, Number(r.home_moneyline), Number(r.away_moneyline)]);
+  console.log(`  ${marketOddsRows.length} completed games with a real historical moneyline`);
+
+  return { schema: SCHEMA, games, marketOdds: { schema: MARKET_ODDS_SCHEMA, rows: marketOddsRows } };
 }
 
 // cfbfastR-data's old single-file archive (schedules/cfb_games_info.csv) was
@@ -160,6 +172,73 @@ async function prepareCfb() {
   games.sort((a, b) => (a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0));
   console.log(`  ${games.length} completed games (${fbsGames.length} FBS vs. FBS)`);
   return { schema: SCHEMA, games, fbsGames };
+}
+
+/** "Away Team@Home Team" -> { away, home }, or null if it's not that shape. */
+function parseGameDesc(desc) {
+  const parts = (desc ?? "").split("@");
+  if (parts.length !== 2) return null;
+  const away = parts[0].trim();
+  const home = parts[1].trim();
+  if (!away || !home) return null;
+  return { away, home };
+}
+
+/**
+ * Real historical moneylines, backfilled from cfbfastR-data's standalone
+ * betting-lines archive (2006-2025, several sportsbooks, gzipped CSV — not
+ * updated in-season, so it never covers the current season). Unlike the box
+ * scores above, there's no gameId+team join available: each row identifies
+ * its team only by `abbr`, which for the 2020+ portion of the archive is the
+ * team's full name (matches `game_desc`'s "Away@Home" names exactly) but for
+ * 2006-2019 is a compressed sportsbook code ("UTH" for Utah) that isn't safe
+ * to resolve without risking a silent mismatch — so only rows whose `abbr`
+ * exactly matches one of `game_desc`'s two names are kept. That drops most
+ * pre-2020 coverage but keeps every kept row unambiguous. Multiple books
+ * reporting the same game are averaged into one consensus price.
+ */
+async function prepareCfbMarketOdds() {
+  console.log("Fetching CFB historical market odds...");
+  const url = "https://raw.githubusercontent.com/sportsdataverse/cfbfastR-data/main/betting/csv/cfb_line_odds.csv.gz";
+  let rows;
+  try {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`${res.status}`);
+    const gz = Buffer.from(await res.arrayBuffer());
+    const csvText = zlib.gunzipSync(gz).toString("utf-8");
+    rows = toObjects(parseCsv(csvText));
+  } catch (e) {
+    console.log(`  skipping (failed to fetch/parse: ${e})`);
+    return { schema: MARKET_ODDS_SCHEMA, rows: [] };
+  }
+
+  const byGame = new Map(); // gameId -> { home: {sum, count}, away: {sum, count} }
+  for (const r of rows) {
+    if (r.market_type !== "money_line" || !r.game_id || !isNum(r.odds)) continue;
+    const desc = parseGameDesc(r.game_desc);
+    if (!desc) continue;
+    const abbr = (r.abbr ?? "").trim().toLowerCase();
+    let side;
+    if (abbr === desc.home.toLowerCase()) side = "home";
+    else if (abbr === desc.away.toLowerCase()) side = "away";
+    else continue;
+
+    let entry = byGame.get(r.game_id);
+    if (!entry) {
+      entry = { home: { sum: 0, count: 0 }, away: { sum: 0, count: 0 } };
+      byGame.set(r.game_id, entry);
+    }
+    entry[side].sum += Number(r.odds);
+    entry[side].count += 1;
+  }
+
+  const marketOddsRows = [];
+  for (const [gameId, entry] of byGame) {
+    if (entry.home.count === 0 || entry.away.count === 0) continue;
+    marketOddsRows.push([gameId, Math.round(entry.home.sum / entry.home.count), Math.round(entry.away.sum / entry.away.count)]);
+  }
+  console.log(`  ${marketOddsRows.length} games with a real historical moneyline (both sides matched)`);
+  return { schema: MARKET_ODDS_SCHEMA, rows: marketOddsRows };
 }
 
 /**
@@ -287,11 +366,13 @@ async function readExistingRows(filename) {
 async function main() {
   await mkdir(OUT_DIR, { recursive: true });
 
-  const nfl = await prepareNfl();
-  await writeFile(path.join(OUT_DIR, "nfl-games.json"), JSON.stringify(nfl));
+  const { schema: nflSchema, games: nflGames, marketOdds: nflMarketOdds } = await prepareNfl();
+  await writeFile(path.join(OUT_DIR, "nfl-games.json"), JSON.stringify({ schema: nflSchema, games: nflGames }));
   console.log(`Wrote public/data/nfl-games.json`);
+  await writeFile(path.join(OUT_DIR, "nfl-market-odds.json"), JSON.stringify(nflMarketOdds));
+  console.log(`Wrote public/data/nfl-market-odds.json`);
 
-  const nflSeasons = [...new Set(nfl.games.map((g) => g[2]))].sort((a, b) => a - b);
+  const nflSeasons = [...new Set(nflGames.map((g) => g[2]))].sort((a, b) => a - b);
   const nflTeamStats = await prepareNflTeamStats(nflSeasons);
   await writeFile(path.join(OUT_DIR, "nfl-team-stats.json"), JSON.stringify(nflTeamStats));
   console.log(`Wrote public/data/nfl-team-stats.json`);
@@ -304,6 +385,10 @@ async function main() {
   const cfbTeamStats = await prepareCfbTeamStats(fbsGames, existingCfbTeamStatRows);
   await writeFile(path.join(OUT_DIR, "cfb-team-stats.json"), JSON.stringify(cfbTeamStats));
   console.log(`Wrote public/data/cfb-team-stats.json`);
+
+  const cfbMarketOdds = await prepareCfbMarketOdds();
+  await writeFile(path.join(OUT_DIR, "cfb-market-odds.json"), JSON.stringify(cfbMarketOdds));
+  console.log(`Wrote public/data/cfb-market-odds.json`);
 }
 
 main().catch((err) => {

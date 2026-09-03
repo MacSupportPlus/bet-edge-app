@@ -3,10 +3,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { brierScore, reliabilityBins } from "@/lib/calibration";
 import { computeEloDataset, EloOptions, Game } from "@/lib/elo";
+import { moneylineToDecimalB } from "@/lib/espn";
 import { compactCurrency } from "@/lib/format";
 import { loadGames } from "@/lib/loadGames";
 import { predictProba, trainLogisticRegression } from "@/lib/logisticRegression";
 import { BacktestStrategy, runBacktest } from "@/lib/backtest";
+import { loadMarketOdds, MarketOdds } from "@/lib/marketOdds";
 import { computeTeamStatDiffs, loadTeamStats, NEUTRAL_TEAM_STAT_FEATURES, TeamGameStat } from "@/lib/teamStats";
 import { BacktestChart } from "./BacktestChart";
 import { ReliabilityChart } from "./ReliabilityChart";
@@ -15,7 +17,7 @@ import { StatTile } from "./StatTile";
 type Dataset = "nfl" | "cfb";
 
 const DATASET_LABELS: Record<Dataset, string> = { nfl: "NFL (1999–present)", cfb: "College Football (2001–present)" };
-const ODDS_B = 100 / 110; // standard -110 both sides, assumed uniformly (no real historical odds in this dataset)
+const ODDS_B = 100 / 110; // standard -110 both sides — the fallback for any held-out game without a real historical market price
 const TEST_FRACTION = 0.2;
 
 const STRATEGIES: { key: BacktestStrategy; label: string; color: string }[] = [
@@ -33,11 +35,13 @@ export function ProbabilityModel() {
     dataset: Dataset;
     games: Game[] | null;
     teamStats: TeamGameStat[] | null;
+    marketOdds: Map<string, MarketOdds> | null;
     error: string | null;
   }>({
     dataset: "nfl",
     games: null,
     teamStats: null,
+    marketOdds: null,
     error: null,
   });
 
@@ -48,12 +52,12 @@ export function ProbabilityModel() {
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([loadGames(dataset), loadTeamStats(dataset)])
-      .then(([g, ts]) => {
-        if (!cancelled) setFetchResult({ dataset, games: g, teamStats: ts, error: null });
+    Promise.all([loadGames(dataset), loadTeamStats(dataset), loadMarketOdds(dataset)])
+      .then(([g, ts, mo]) => {
+        if (!cancelled) setFetchResult({ dataset, games: g, teamStats: ts, marketOdds: mo, error: null });
       })
       .catch((e) => {
-        if (!cancelled) setFetchResult({ dataset, games: null, teamStats: null, error: String(e) });
+        if (!cancelled) setFetchResult({ dataset, games: null, teamStats: null, marketOdds: null, error: String(e) });
       });
     return () => {
       cancelled = true;
@@ -65,6 +69,7 @@ export function ProbabilityModel() {
   // first fetch has resolved — also require games/error to be populated.
   const games = fetchResult.dataset === dataset ? fetchResult.games : null;
   const teamStats = fetchResult.dataset === dataset ? fetchResult.teamStats : null;
+  const marketOdds = fetchResult.dataset === dataset ? fetchResult.marketOdds : null;
   const error = fetchResult.dataset === dataset ? fetchResult.error : null;
   const loading = fetchResult.dataset !== dataset || (games === null && error === null);
 
@@ -127,7 +132,20 @@ export function ProbabilityModel() {
 
     const bins = reliabilityBins(testPredictions, testOutcomes, 10);
 
-    const backtestRows = test.map((r, i) => ({ pHome: testPredictions[i], homeWin: r.homeWin }));
+    // Price each held-out game at its real historical moneyline when one is
+    // on file; fall back to the synthetic -110 assumption otherwise. Real
+    // coverage is partial (see marketOdds.ts), so this is reported honestly
+    // rather than implied to be complete.
+    const backtestRows = test.map((r, i) => {
+      const real = r.gameId ? marketOdds?.get(r.gameId) : undefined;
+      return {
+        pHome: testPredictions[i],
+        homeWin: r.homeWin,
+        homeB: real ? moneylineToDecimalB(real.homeMoneyline) : undefined,
+        awayB: real ? moneylineToDecimalB(real.awayMoneyline) : undefined,
+      };
+    });
+    const realOddsCount = backtestRows.filter((r) => r.homeB !== undefined).length;
     const backtests = STRATEGIES.map((s) => {
       const result = runBacktest(backtestRows, ODDS_B, startingBankroll, s.key);
       // Per-bet geometric growth rate — the same g from Phase 1, backed out
@@ -156,10 +174,11 @@ export function ProbabilityModel() {
       eloOnlyBrier,
       bins,
       backtests,
+      realOddsCount,
       pAtEven,
       pAt200,
     };
-  }, [games, teamStats, eloOptions, startingBankroll]);
+  }, [games, teamStats, marketOdds, eloOptions, startingBankroll]);
 
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-6 py-10">
@@ -328,12 +347,13 @@ export function ProbabilityModel() {
               Backtest: flat vs. full-Kelly vs. half-Kelly sizing
             </h2>
             <p className="mb-2 text-xs" style={{ color: "var(--text-muted)" }}>
-              Every held-out game is offered at standard -110 odds on both sides (b ≈ 0.909) — this
-              dataset has no real historical sportsbook lines, so this is a simplifying assumption,
-              not an actual market price. A bet is placed only when the model shows positive
-              expectancy at those odds, and every single bet is capped at 25% of the current
-              bankroll regardless of how large Kelly&apos;s raw recommendation is (even half-Kelly can
-              still be ~50% on a very confident prediction — a hard cap is the real defense).
+              {analysis.realOddsCount > 0
+                ? `${analysis.realOddsCount.toLocaleString()} of ${analysis.testCount.toLocaleString()} held-out games (${((analysis.realOddsCount / analysis.testCount) * 100).toFixed(0)}%) are priced at a real historical sportsbook moneyline; the rest fall back to a standard -110-both-sides assumption (b ≈ 0.909) since no real line was available for them.`
+                : `Every held-out game here is offered at standard -110 odds on both sides (b ≈ 0.909) — no real historical sportsbook lines are available for this dataset yet, so this is a simplifying assumption, not an actual market price.`}{" "}
+              A bet is placed only when the model shows positive expectancy at those odds, and every
+              single bet is capped at 25% of the current bankroll regardless of how large
+              Kelly&apos;s raw recommendation is (even half-Kelly can still be ~50% on a very
+              confident prediction — a hard cap is the real defense).
             </p>
             <p className="mb-2 text-xs" style={{ color: "var(--text-muted)" }}>
               Full-Kelly&apos;s bankroll figure below can still look absurd (sometimes far beyond
