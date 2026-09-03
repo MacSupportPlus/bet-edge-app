@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { BetEntry, summarizeBankroll } from "@/lib/bankroll";
 import { brierScore } from "@/lib/calibration";
-import { DEFAULT_ELO_OPTIONS, EloGameRecord, EloHistoryPoint, EloOptions, Game, runElo } from "@/lib/elo";
+import { EloGameRecord, EloHistoryPoint, Game, runElo } from "@/lib/elo";
 import {
   fetchOddsForGames,
   fetchTeamStatsForIds,
@@ -18,9 +18,10 @@ import {
 import { currency } from "@/lib/format";
 import { loadGames } from "@/lib/loadGames";
 import { predictProba, trainLogisticRegression } from "@/lib/logisticRegression";
-import { FRACTIONAL_OPTIONS, formatMoneyline } from "@/lib/odds";
+import { FRACTIONAL_OPTIONS, formatMoneyline, parseMoneyline } from "@/lib/odds";
 import { headToHead, headToHeadRecord, seasonAverage, teamStatTrend } from "@/lib/research";
 import { classifyPick, MAX_TRUSTED_DISAGREEMENT, MAX_TRUSTED_RATIO, pickSide, PickResult } from "@/lib/scanner";
+import { SPORT_ELO_OPTIONS, SPORT_LABELS } from "@/lib/sportConfig";
 import { matchTeamName } from "@/lib/teamMatch";
 import { computeTeamStatDiffs, loadTeamStats, NEUTRAL_TEAM_STAT_FEATURES, TeamGameStat } from "@/lib/teamStats";
 import { useLocalStorageState } from "@/lib/useLocalStorageState";
@@ -33,19 +34,11 @@ const RETRO_LOOKBACK_DAYS = 10;
 /** How far ahead to look for upcoming games. NFL weeks run Thu-Mon (needs a wider window); CFB's are tighter. */
 const SCHEDULE_LOOKAHEAD_DAYS: Record<Sport, number> = { cfb: 8, nfl: 13 };
 
-const SPORT_LABELS: Record<Sport, string> = { cfb: "College Football", nfl: "NFL" };
-
-/** NFL rosters turn over far less than college's — the season-regression tune that helps CFB measurably hurts NFL's early-season calibration (see elo.ts), so NFL gets none of it here. */
-const SPORT_ELO_OPTIONS: Record<Sport, EloOptions> = {
-  cfb: DEFAULT_ELO_OPTIONS,
-  nfl: { ...DEFAULT_ELO_OPTIONS, seasonRegression: 0 },
-};
-
 interface Snapshot {
   requestId: number;
   sport: Sport;
   historicalGames: Game[];
-  nflTeamStats: TeamGameStat[] | null;
+  teamGameStats: TeamGameStat[] | null;
   upcomingGames: UpcomingGame[];
   currentWeek: number | null;
   oddsByEspnId: Map<string, GameOdds | null>;
@@ -118,6 +111,94 @@ function matchKeyFor(sport: Sport, game: UpcomingGame, side: "home" | "away"): s
 
 const OTHER_SPORT: Record<Sport, Sport> = { cfb: "nfl", nfl: "cfb" };
 
+/**
+ * Every posted price here comes from one sportsbook via ESPN — if you're
+ * actually betting somewhere else, the number in front of you can be
+ * different enough to flip the verdict. This re-runs the exact same
+ * pick/classify pipeline against whatever price you type in, so "the model
+ * likes this" can be checked against the book you're actually using, not
+ * just the one ESPN happened to track.
+ */
+function OddsRecheck({
+  pHome,
+  homeTeam,
+  awayTeam,
+  defaultHomeMl,
+  defaultAwayMl,
+  currentBankroll,
+  fractionalMultiplier,
+}: {
+  pHome: number;
+  homeTeam: string;
+  awayTeam: string;
+  defaultHomeMl: number | null;
+  defaultAwayMl: number | null;
+  currentBankroll: number;
+  fractionalMultiplier: number;
+}) {
+  const [homeInput, setHomeInput] = useState(defaultHomeMl !== null ? String(defaultHomeMl) : "");
+  const [awayInput, setAwayInput] = useState(defaultAwayMl !== null ? String(defaultAwayMl) : "");
+
+  const homeMl = parseMoneyline(homeInput);
+  const awayMl = parseMoneyline(awayInput);
+  const result =
+    homeMl !== null && awayMl !== null
+      ? classifyPick(pickSide(pHome, homeMl, awayMl, homeTeam, awayTeam), currentBankroll, fractionalMultiplier)
+      : null;
+
+  return (
+    <details className="mt-2 rounded-md border px-2 py-1.5 text-xs" style={{ borderColor: "var(--card-border)" }}>
+      <summary className="cursor-pointer" style={{ color: "var(--text-muted)" }}>
+        Betting at a different book? Check your own price
+      </summary>
+      <div className="mt-2 flex flex-wrap items-center gap-3">
+        <label className="flex items-center gap-1">
+          <span style={{ color: "var(--text-muted)" }}>{awayTeam}</span>
+          <input
+            type="text"
+            inputMode="numeric"
+            placeholder="e.g. +130"
+            value={awayInput}
+            onChange={(e) => setAwayInput(e.target.value)}
+            className="w-16 rounded border px-1.5 py-0.5 tabular-nums"
+            style={{ borderColor: "var(--card-border)", color: "var(--text-primary)" }}
+          />
+        </label>
+        <label className="flex items-center gap-1">
+          <span style={{ color: "var(--text-muted)" }}>{homeTeam}</span>
+          <input
+            type="text"
+            inputMode="numeric"
+            placeholder="e.g. -150"
+            value={homeInput}
+            onChange={(e) => setHomeInput(e.target.value)}
+            className="w-16 rounded border px-1.5 py-0.5 tabular-nums"
+            style={{ borderColor: "var(--card-border)", color: "var(--text-primary)" }}
+          />
+        </label>
+      </div>
+      {result && (
+        <p
+          className="mt-1.5"
+          style={{
+            color:
+              result.status === "edge"
+                ? "var(--status-good)"
+                : result.status === "flagged"
+                  ? "var(--status-critical)"
+                  : "var(--text-muted)",
+          }}
+        >
+          {result.status === "edge" &&
+            `Still a bet at this price: ${result.pick.team} ${formatMoneyline(result.pick.moneyline)}, stake ${currency(result.stake)}.`}
+          {result.status === "flagged" && `Flagged at this price too — model disagrees with the market by too much to trust.`}
+          {result.status === "no-edge" && `No edge at this price.`}
+        </p>
+      )}
+    </details>
+  );
+}
+
 export function WeeklyEdges({ sport }: { sport: Sport }) {
   const [requestId, setRequestId] = useState(0);
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
@@ -135,9 +216,9 @@ export function WeeklyEdges({ sport }: { sport: Sport }) {
     let cancelled = false;
     (async () => {
       try {
-        const [historicalGames, nflTeamStats, schedule] = await Promise.all([
+        const [historicalGames, teamGameStats, schedule] = await Promise.all([
           loadGames(sport),
-          sport === "nfl" ? loadTeamStats() : Promise.resolve(null),
+          loadTeamStats(sport),
           fetchUpcomingGames(sport, SCHEDULE_LOOKAHEAD_DAYS[sport]),
         ]);
         const { games: upcomingGames, currentWeek } = schedule;
@@ -163,7 +244,7 @@ export function WeeklyEdges({ sport }: { sport: Sport }) {
             requestId,
             sport,
             historicalGames,
-            nflTeamStats,
+            teamGameStats,
             upcomingGames,
             currentWeek,
             oddsByEspnId,
@@ -178,7 +259,7 @@ export function WeeklyEdges({ sport }: { sport: Sport }) {
             requestId,
             sport,
             historicalGames: [],
-            nflTeamStats: null,
+            teamGameStats: null,
             upcomingGames: [],
             currentWeek: null,
             oddsByEspnId: new Map(),
@@ -198,7 +279,7 @@ export function WeeklyEdges({ sport }: { sport: Sport }) {
 
   const analysis = useMemo(() => {
     if (loading || !snapshot || snapshot.error) return null;
-    const { historicalGames, nflTeamStats, upcomingGames, oddsByEspnId } = snapshot;
+    const { historicalGames, teamGameStats, upcomingGames, oddsByEspnId } = snapshot;
     if (historicalGames.length === 0) return null;
 
     const knownTeams = new Set<string>();
@@ -210,10 +291,10 @@ export function WeeklyEdges({ sport }: { sport: Sport }) {
     const eloOptions = SPORT_ELO_OPTIONS[sport];
     const { records, finalRatings, ratingHistory } = runElo(historicalGames, eloOptions);
 
-    // NFL trains Elo + real team-stat features (yards, turnover margin, offensive
-    // EPA), the same as the Probability Model tab; CFB has no such archive, so it
-    // stays Elo-only — see teamStats.ts.
-    const statDiffs = nflTeamStats ? computeTeamStatDiffs(historicalGames, nflTeamStats) : new Map();
+    // Both sports train Elo + real team-stat features (yards, turnover margin) when
+    // an archive is available; NFL also gets offensive EPA (ESPN's CFB box scores
+    // don't publish it, so that feature stays 0 for CFB) — see teamStats.ts.
+    const statDiffs = teamGameStats ? computeTeamStatDiffs(historicalGames, teamGameStats) : new Map();
     const hasTeamStats = statDiffs.size > 0;
     const statFeaturesFor = (r: { gameId?: string }) => (r.gameId && statDiffs.get(r.gameId)) || NEUTRAL_TEAM_STAT_FEATURES;
     const featuresFor = (r: (typeof records)[number]) => {
@@ -232,17 +313,17 @@ export function WeeklyEdges({ sport }: { sport: Sport }) {
     // and cached — used both as a live prediction feature and for the "season
     // so far" display line, so what's shown matches what the model actually saw.
     const currentSeason = historicalGames[historicalGames.length - 1].season;
-    const nflSeasonAvgCache = new Map<string, ReturnType<typeof seasonAverage>>();
-    const nflSeasonAvgFor = (team: string) => {
-      if (!nflSeasonAvgCache.has(team)) {
-        nflSeasonAvgCache.set(team, nflTeamStats ? seasonAverage(teamStatTrend(historicalGames, nflTeamStats, team), currentSeason) : null);
+    const seasonAvgCache = new Map<string, ReturnType<typeof seasonAverage>>();
+    const seasonAvgFor = (team: string) => {
+      if (!seasonAvgCache.has(team)) {
+        seasonAvgCache.set(team, teamGameStats ? seasonAverage(teamStatTrend(historicalGames, teamGameStats, team), currentSeason) : null);
       }
-      return nflSeasonAvgCache.get(team) ?? null;
+      return seasonAvgCache.get(team) ?? null;
     };
-    const nflDisplayStatsFor = (team: string): TeamSeasonStats | null => {
+    const teamStatsDisplayFor = (team: string): TeamSeasonStats | null => {
       const history = ratingHistory.get(team)?.filter((g) => g.season === currentSeason);
       if (!history || history.length === 0) return null;
-      const avg = nflSeasonAvgFor(team);
+      const avg = seasonAvgFor(team);
       return {
         pointsPerGame: history.reduce((s, g) => s + g.pointsFor, 0) / history.length,
         yardsPerGame: avg?.totalYards ?? null,
@@ -264,8 +345,8 @@ export function WeeklyEdges({ sport }: { sport: Sport }) {
       const eloDiff = homeElo + homeAdv - awayElo;
       let features = [eloDiff];
       if (hasTeamStats) {
-        const homeAvg = nflSeasonAvgFor(matchedHome);
-        const awayAvg = nflSeasonAvgFor(matchedAway);
+        const homeAvg = seasonAvgFor(matchedHome);
+        const awayAvg = seasonAvgFor(matchedAway);
         const f =
           homeAvg && awayAvg
             ? {
@@ -308,7 +389,7 @@ export function WeeklyEdges({ sport }: { sport: Sport }) {
       ratingHistory,
       historicalGames,
       hasTeamStats,
-      nflDisplayStatsFor,
+      teamStatsDisplayFor,
     };
   }, [snapshot, loading, sport, currentBankroll, fractionalMultiplier]);
 
@@ -320,7 +401,7 @@ export function WeeklyEdges({ sport }: { sport: Sport }) {
   // immediately before that specific game.
   const reportCard = useMemo(() => {
     if (loading || !snapshot || snapshot.error) return null;
-    const { historicalGames, nflTeamStats, retroOddsByGameId } = snapshot;
+    const { historicalGames, teamGameStats, retroOddsByGameId } = snapshot;
     if (historicalGames.length === 0) return null;
 
     const retroCutoff = new Date();
@@ -329,7 +410,7 @@ export function WeeklyEdges({ sport }: { sport: Sport }) {
 
     const eloOptions = SPORT_ELO_OPTIONS[sport];
     const { records } = runElo(historicalGames, eloOptions);
-    const statDiffs = nflTeamStats ? computeTeamStatDiffs(historicalGames, nflTeamStats) : new Map();
+    const statDiffs = teamGameStats ? computeTeamStatDiffs(historicalGames, teamGameStats) : new Map();
     const hasTeamStats = statDiffs.size > 0;
     const statFeaturesFor = (r: { gameId?: string }) => (r.gameId && statDiffs.get(r.gameId)) || NEUTRAL_TEAM_STAT_FEATURES;
     const featuresFor = (r: (typeof records)[number]) => {
@@ -503,9 +584,9 @@ export function WeeklyEdges({ sport }: { sport: Sport }) {
                   stake: row.stake.toFixed(0),
                 }).toString();
                 const homeStats =
-                  sport === "nfl" ? analysis.nflDisplayStatsFor(row.matchedHome) : snapshot?.teamStatsByTeamId.get(row.game.homeTeamId ?? "");
+                  sport === "nfl" ? analysis.teamStatsDisplayFor(row.matchedHome) : snapshot?.teamStatsByTeamId.get(row.game.homeTeamId ?? "");
                 const awayStats =
-                  sport === "nfl" ? analysis.nflDisplayStatsFor(row.matchedAway) : snapshot?.teamStatsByTeamId.get(row.game.awayTeamId ?? "");
+                  sport === "nfl" ? analysis.teamStatsDisplayFor(row.matchedAway) : snapshot?.teamStatsByTeamId.get(row.game.awayTeamId ?? "");
                 const homeStatsLine = formatTeamStatsLine(homeStats);
                 const awayStatsLine = formatTeamStatsLine(awayStats);
                 const statsAreStale =
@@ -588,6 +669,15 @@ export function WeeklyEdges({ sport }: { sport: Sport }) {
                         </div>
                       </div>
                     </details>
+                    <OddsRecheck
+                      pHome={row.pick.side === "home" ? row.pick.summary.p : 1 - row.pick.summary.p}
+                      homeTeam={row.matchedHome}
+                      awayTeam={row.matchedAway}
+                      defaultHomeMl={snapshot?.oddsByEspnId.get(row.game.espnId)?.homeMoneyline ?? null}
+                      defaultAwayMl={snapshot?.oddsByEspnId.get(row.game.espnId)?.awayMoneyline ?? null}
+                      currentBankroll={currentBankroll}
+                      fractionalMultiplier={fractionalMultiplier}
+                    />
                   </div>
                 );
               })}
@@ -602,21 +692,32 @@ export function WeeklyEdges({ sport }: { sport: Sport }) {
               </summary>
               <div className="mt-2 flex flex-col gap-1 text-xs" style={{ color: "var(--text-muted)" }}>
                 {analysis.flaggedRows.map((row) => (
-                  <div key={row.game.espnId} className="flex flex-wrap items-center gap-x-2">
-                    <span>
-                      {row.game.awayTeam} at {row.game.homeTeam} — model says {row.pick.team}{" "}
-                      {(row.pick.summary.p * 100).toFixed(0)}%, market implies only{" "}
-                      {(row.pick.marketImplied * 100).toFixed(0)}% ({formatMoneyline(row.pick.moneyline)}). Not shown
-                      as a bet — this gap almost certainly means the model is missing something.
-                    </span>
-                    <Link
-                      href={researchUrl(sport, row.matchedHome, row.matchedAway, row.game.espnId)}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      style={{ color: "var(--series-1)" }}
-                    >
-                      Research →
-                    </Link>
+                  <div key={row.game.espnId} className="flex flex-col gap-1 rounded-md border px-2 py-1.5" style={{ borderColor: "var(--card-border)" }}>
+                    <div className="flex flex-wrap items-center gap-x-2">
+                      <span>
+                        {row.game.awayTeam} at {row.game.homeTeam} — model says {row.pick.team}{" "}
+                        {(row.pick.summary.p * 100).toFixed(0)}%, market implies only{" "}
+                        {(row.pick.marketImplied * 100).toFixed(0)}% ({formatMoneyline(row.pick.moneyline)}). Not shown
+                        as a bet — this gap almost certainly means the model is missing something.
+                      </span>
+                      <Link
+                        href={researchUrl(sport, row.matchedHome, row.matchedAway, row.game.espnId)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{ color: "var(--series-1)" }}
+                      >
+                        Research →
+                      </Link>
+                    </div>
+                    <OddsRecheck
+                      pHome={row.pick.side === "home" ? row.pick.summary.p : 1 - row.pick.summary.p}
+                      homeTeam={row.matchedHome}
+                      awayTeam={row.matchedAway}
+                      defaultHomeMl={snapshot?.oddsByEspnId.get(row.game.espnId)?.homeMoneyline ?? null}
+                      defaultAwayMl={snapshot?.oddsByEspnId.get(row.game.espnId)?.awayMoneyline ?? null}
+                      currentBankroll={currentBankroll}
+                      fractionalMultiplier={fractionalMultiplier}
+                    />
                   </div>
                 ))}
               </div>
@@ -635,19 +736,30 @@ export function WeeklyEdges({ sport }: { sport: Sport }) {
               </p>
               <div className="mt-2 flex flex-col gap-1 text-xs" style={{ color: "var(--text-muted)" }}>
                 {analysis.noEdgeRows.map((row) => (
-                  <div key={row.game.espnId} className="flex flex-wrap items-center gap-x-2">
-                    <span>
-                      {row.game.awayTeam} at {row.game.homeTeam} — model {(row.pHome * 100).toFixed(0)}% home, priced
-                      efficiently at {row.provider}
-                    </span>
-                    <Link
-                      href={researchUrl(sport, row.matchedHome, row.matchedAway, row.game.espnId)}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      style={{ color: "var(--series-1)" }}
-                    >
-                      Research →
-                    </Link>
+                  <div key={row.game.espnId} className="flex flex-col gap-1 rounded-md border px-2 py-1.5" style={{ borderColor: "var(--card-border)" }}>
+                    <div className="flex flex-wrap items-center gap-x-2">
+                      <span>
+                        {row.game.awayTeam} at {row.game.homeTeam} — model {(row.pHome * 100).toFixed(0)}% home, priced
+                        efficiently at {row.provider}
+                      </span>
+                      <Link
+                        href={researchUrl(sport, row.matchedHome, row.matchedAway, row.game.espnId)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{ color: "var(--series-1)" }}
+                      >
+                        Research →
+                      </Link>
+                    </div>
+                    <OddsRecheck
+                      pHome={row.pHome}
+                      homeTeam={row.matchedHome}
+                      awayTeam={row.matchedAway}
+                      defaultHomeMl={snapshot?.oddsByEspnId.get(row.game.espnId)?.homeMoneyline ?? null}
+                      defaultAwayMl={snapshot?.oddsByEspnId.get(row.game.espnId)?.awayMoneyline ?? null}
+                      currentBankroll={currentBankroll}
+                      fractionalMultiplier={fractionalMultiplier}
+                    />
                   </div>
                 ))}
               </div>
@@ -662,20 +774,33 @@ export function WeeklyEdges({ sport }: { sport: Sport }) {
               </summary>
               <div className="mt-2 flex flex-col gap-1 text-xs" style={{ color: "var(--text-muted)" }}>
                 {analysis.unavailableRows.map((row) => (
-                  <div key={row.game.espnId} className="flex flex-wrap items-center gap-x-2">
-                    <span>
-                      {row.game.awayTeam} at {row.game.homeTeam} —{" "}
-                      {row.status === "unmatched" ? "team not found in historical data" : "odds not posted yet"}
-                    </span>
+                  <div key={row.game.espnId} className="flex flex-col gap-1 rounded-md border px-2 py-1.5" style={{ borderColor: "var(--card-border)" }}>
+                    <div className="flex flex-wrap items-center gap-x-2">
+                      <span>
+                        {row.game.awayTeam} at {row.game.homeTeam} —{" "}
+                        {row.status === "unmatched" ? "team not found in historical data" : "odds not posted yet"}
+                      </span>
+                      {row.status === "no-odds" && (
+                        <Link
+                          href={researchUrl(sport, row.matchedHome, row.matchedAway, row.game.espnId)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          style={{ color: "var(--series-1)" }}
+                        >
+                          Research →
+                        </Link>
+                      )}
+                    </div>
                     {row.status === "no-odds" && (
-                      <Link
-                        href={researchUrl(sport, row.matchedHome, row.matchedAway, row.game.espnId)}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        style={{ color: "var(--series-1)" }}
-                      >
-                        Research →
-                      </Link>
+                      <OddsRecheck
+                        pHome={row.pHome}
+                        homeTeam={row.matchedHome}
+                        awayTeam={row.matchedAway}
+                        defaultHomeMl={null}
+                        defaultAwayMl={null}
+                        currentBankroll={currentBankroll}
+                        fractionalMultiplier={fractionalMultiplier}
+                      />
                     )}
                   </div>
                 ))}
@@ -771,7 +896,7 @@ export function WeeklyEdges({ sport }: { sport: Sport }) {
         public (unofficial) API, which can change or go down without notice. Treat every row here
         as a starting point to sanity-check, not a guarantee.{" "}
         {sport === "cfb"
-          ? `The "Season so far" line under each matchup is informational context pulled live from ESPN — it is not fed into the model or the pick, since there's no historical archive of these stats for college football to train on the way there is for the NFL.`
+          ? `The "Season so far" line under each matchup is informational context pulled live from ESPN — it can differ slightly from what the model saw, which trains on our own box-score archive (FBS games, backfilled from ESPN) rather than this live feed.`
           : `The "Season so far" line under each matchup is computed from the same archive the model trains on, so it always matches what actually drove the prediction.`}
       </p>
     </div>

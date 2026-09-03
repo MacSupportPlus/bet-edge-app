@@ -14,7 +14,7 @@ import { StatTile } from "./StatTile";
 
 type Dataset = "nfl" | "cfb";
 
-const DATASET_LABELS: Record<Dataset, string> = { nfl: "NFL (1999–present)", cfb: "College Football (2004–present)" };
+const DATASET_LABELS: Record<Dataset, string> = { nfl: "NFL (1999–present)", cfb: "College Football (2001–present)" };
 const ODDS_B = 100 / 110; // standard -110 both sides, assumed uniformly (no real historical odds in this dataset)
 const TEST_FRACTION = 0.2;
 
@@ -48,9 +48,7 @@ export function ProbabilityModel() {
 
   useEffect(() => {
     let cancelled = false;
-    // Team box-score stats only exist for NFL — nflverse publishes a weekly
-    // per-team archive; CFB has no equivalent without parsing raw play-by-play.
-    Promise.all([loadGames(dataset), dataset === "nfl" ? loadTeamStats() : Promise.resolve(null)])
+    Promise.all([loadGames(dataset), loadTeamStats(dataset)])
       .then(([g, ts]) => {
         if (!cancelled) setFetchResult({ dataset, games: g, teamStats: ts, error: null });
       })
@@ -85,8 +83,8 @@ export function ProbabilityModel() {
 
     // Team box-score stats (yards, turnover margin, offensive EPA) as extra
     // pregame features, season-to-date and walk-forward — same no-leakage
-    // discipline as Elo. NFL only; CFB has no per-game stats archive, so
-    // `statDiffs` stays empty and every game falls back to neutral (0) below.
+    // discipline as Elo. CFB's archive has no EPA figure (ESPN's box score
+    // doesn't publish it), so that one feature is always 0 for CFB rows.
     const statDiffs = teamStats ? computeTeamStatDiffs(games, teamStats) : new Map();
     const hasTeamStats = statDiffs.size > 0;
     const statFeaturesFor = (r: { gameId?: string }) => (r.gameId && statDiffs.get(r.gameId)) || NEUTRAL_TEAM_STAT_FEATURES;
@@ -311,9 +309,10 @@ export function ProbabilityModel() {
               only games already played before the one being predicted, so nothing leaks from the
               future. The &quot;vs. Elo-only&quot; tile above trains the exact same model without
               those extra stats and compares it head-to-head, so you can see whether they&apos;re
-              actually earning their keep, not just assumed to help. This is NFL-only — college
-              football has no equivalent public archive of per-game team stats going back years, so
-              its model still runs on Elo alone.
+              actually earning their keep, not just assumed to help. College football&apos;s version
+              of this archive is backfilled from ESPN&apos;s box scores rather than a
+              purpose-built stats feed, and has no offensive-EPA figure, so that one feature stays
+              at 0 for every CFB game.
             </p>
           )}
 

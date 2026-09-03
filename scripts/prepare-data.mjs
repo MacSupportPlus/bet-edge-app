@@ -7,11 +7,13 @@
  *
  * Re-run with `node scripts/prepare-data.mjs` to refresh with newer games.
  * Sources:
- *   NFL: https://github.com/nflverse/nfldata (games.csv)
- *   CFB: https://github.com/sportsdataverse/cfbfastR-data (schedules/cfb_games_info.csv)
+ *   NFL: https://github.com/nflverse/nfldata (games.csv) + nflverse-data (stats_team_week)
+ *   CFB: https://github.com/sportsdataverse/cfbfastR-data (schedules/csv) for games;
+ *        ESPN's site API (game-summary box scores) for team stats, backfilled
+ *        incrementally since cfbfastR has no maintained per-game stats archive.
  */
 
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
@@ -120,6 +122,12 @@ const CFB_SEASONS = Array.from({ length: 2026 - 2001 + 1 }, (_, i) => 2001 + i);
 async function prepareCfb() {
   console.log("Fetching CFB games...");
   const games = [];
+  // Every FBS-vs-FBS completed game (gameId, teams, season) — a superset of
+  // `games` restricted to the division ESPN's box-score endpoint is worth
+  // backfilling for (see prepareCfbTeamStats). Kept separate from `games`
+  // itself so the historical/Elo dataset keeps including FCS opponents,
+  // which do affect an FBS team's rating.
+  const fbsGames = [];
   for (const season of CFB_SEASONS) {
     const url = `https://raw.githubusercontent.com/sportsdataverse/cfbfastR-data/main/schedules/csv/cfb_schedules_${season}.csv`;
     let rows;
@@ -144,18 +152,24 @@ async function prepareCfb() {
         Number(r.away_points),
         r.neutral_site === "TRUE",
       ]);
+      if (r.game_id && r.home_division === "fbs" && r.away_division === "fbs") {
+        fbsGames.push({ gameId: r.game_id, season: Number(r.season), homeTeam: r.home_team, awayTeam: r.away_team });
+      }
     }
   }
   games.sort((a, b) => (a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0));
-  console.log(`  ${games.length} completed games`);
-  return { schema: SCHEMA, games };
+  console.log(`  ${games.length} completed games (${fbsGames.length} FBS vs. FBS)`);
+  return { schema: SCHEMA, games, fbsGames };
 }
 
 /**
- * Per-team-per-game box score stats (NFL only — nflverse publishes a weekly
- * team-stats file per season; college football has no equivalent bulk
- * archive without parsing full play-by-play, so CFB skips this entirely).
+ * Per-team-per-game box score stats. NFL's comes from nflverse's weekly
+ * archive; CFB has no equivalent bulk file (cfbfastR's own play-by-play
+ * archive was abandoned after the 2021 season), so it's backfilled directly
+ * from ESPN's game-summary endpoint instead — the same one already used for
+ * live odds, keyed by the same numeric game_id cfbfastR's schedule carries.
  * Compact schema: [gameId, team, totalYards, turnoverMargin, offEpa]
+ * (offEpa is always 0 for CFB rows — ESPN's box score doesn't publish it.)
  */
 const TEAM_STAT_SCHEMA = ["gameId", "team", "totalYards", "turnoverMargin", "offEpa"];
 
@@ -186,6 +200,90 @@ async function prepareNflTeamStats(seasons) {
   return { schema: TEAM_STAT_SCHEMA, rows };
 }
 
+/** Runs `fn` over `items` with at most `limit` in flight at once — polite to ESPN's unofficial API for a several-thousand-game backfill. */
+async function mapWithConcurrency(items, limit, fn) {
+  let nextIndex = 0;
+  async function worker() {
+    while (nextIndex < items.length) {
+      const i = nextIndex++;
+      await fn(items[i], i);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, () => worker()));
+}
+
+/** One completed game's box score from ESPN's summary endpoint, as [home row, away row] in TEAM_STAT_SCHEMA shape — or null if ESPN has nothing usable for it. */
+async function fetchCfbBoxScoreRows(gameId, homeTeam, awayTeam) {
+  let res;
+  try {
+    res = await fetch(`https://site.api.espn.com/apis/site/v2/sports/football/college-football/summary?event=${gameId}`);
+  } catch {
+    return null;
+  }
+  if (!res.ok) return null;
+  let data;
+  try {
+    data = await res.json();
+  } catch {
+    return null;
+  }
+  const teams = data?.boxscore?.teams;
+  if (!Array.isArray(teams) || teams.length !== 2) return null;
+  const home = teams.find((t) => t.homeAway === "home");
+  const away = teams.find((t) => t.homeAway === "away");
+  if (!home || !away) return null;
+  const stat = (teamBox, name) => {
+    const entry = teamBox.statistics?.find((s) => s.name === name);
+    const v = entry ? Number(entry.displayValue) : NaN;
+    return Number.isFinite(v) ? v : null;
+  };
+  const homeYards = stat(home, "totalYards");
+  const awayYards = stat(away, "totalYards");
+  const homeTurnovers = stat(home, "turnovers");
+  const awayTurnovers = stat(away, "turnovers");
+  if (homeYards === null || awayYards === null || homeTurnovers === null || awayTurnovers === null) return null;
+  return [
+    [gameId, homeTeam, homeYards, awayTurnovers - homeTurnovers, 0],
+    [gameId, awayTeam, awayYards, homeTurnovers - awayTurnovers, 0],
+  ];
+}
+
+// ESPN's box scores are confirmed available back to at least 2005, but
+// backfilling all ~20 seasons of FBS games in one run is a lot to ask of an
+// unofficial API — start with a recent window (still ~8000+ games) and lower
+// this later to extend it. Each daily run only fetches games not already in
+// the existing file, so this cost is paid once per season added, not repeatedly.
+const CFB_TEAM_STATS_MIN_SEASON = 2018;
+
+async function prepareCfbTeamStats(fbsGames, existingRows) {
+  console.log("Fetching CFB box-score team stats (FBS vs. FBS, backfilled from ESPN)...");
+  const covered = new Set(existingRows.map((r) => r[0])); // gameId — both teams' rows are always written together
+  const eligible = fbsGames.filter((g) => g.season >= CFB_TEAM_STATS_MIN_SEASON && !covered.has(g.gameId));
+  console.log(`  ${covered.size} games already cached, ${eligible.length} new to fetch`);
+
+  const newRows = [];
+  let done = 0;
+  await mapWithConcurrency(eligible, 6, async (g) => {
+    const rows = await fetchCfbBoxScoreRows(g.gameId, g.homeTeam, g.awayTeam);
+    if (rows) newRows.push(...rows);
+    done++;
+    if (done % 500 === 0) console.log(`  ...${done}/${eligible.length}`);
+  });
+
+  console.log(`  +${newRows.length / 2} games fetched successfully (${eligible.length - newRows.length / 2} unavailable)`);
+  return { schema: TEAM_STAT_SCHEMA, rows: [...existingRows, ...newRows] };
+}
+
+/** Reads an existing public/data JSON file's `rows`, or [] if it doesn't exist yet (first run). */
+async function readExistingRows(filename) {
+  try {
+    const raw = await readFile(path.join(OUT_DIR, filename), "utf-8");
+    return JSON.parse(raw).rows ?? [];
+  } catch {
+    return [];
+  }
+}
+
 async function main() {
   await mkdir(OUT_DIR, { recursive: true });
 
@@ -198,9 +296,14 @@ async function main() {
   await writeFile(path.join(OUT_DIR, "nfl-team-stats.json"), JSON.stringify(nflTeamStats));
   console.log(`Wrote public/data/nfl-team-stats.json`);
 
-  const cfb = await prepareCfb();
-  await writeFile(path.join(OUT_DIR, "cfb-games.json"), JSON.stringify(cfb));
+  const { schema, games, fbsGames } = await prepareCfb();
+  await writeFile(path.join(OUT_DIR, "cfb-games.json"), JSON.stringify({ schema, games }));
   console.log(`Wrote public/data/cfb-games.json`);
+
+  const existingCfbTeamStatRows = await readExistingRows("cfb-team-stats.json");
+  const cfbTeamStats = await prepareCfbTeamStats(fbsGames, existingCfbTeamStatRows);
+  await writeFile(path.join(OUT_DIR, "cfb-team-stats.json"), JSON.stringify(cfbTeamStats));
+  console.log(`Wrote public/data/cfb-team-stats.json`);
 }
 
 main().catch((err) => {

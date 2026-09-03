@@ -12,6 +12,7 @@ import { predictProba, sigmoid, trainLogisticRegression } from "@/lib/logisticRe
 import { FRACTIONAL_OPTIONS, formatMoneyline, parseMoneyline } from "@/lib/odds";
 import { headToHead, headToHeadRecord, seasonAverage, teamStatTrend } from "@/lib/research";
 import { classifyPick, MAX_TRUSTED_DISAGREEMENT, MAX_TRUSTED_RATIO, pickSide } from "@/lib/scanner";
+import { SPORT_ELO_OPTIONS } from "@/lib/sportConfig";
 import { computeTeamStatDiffs, loadTeamStats, NEUTRAL_TEAM_STAT_FEATURES, TeamGameStat } from "@/lib/teamStats";
 import { useLocalStorageState } from "@/lib/useLocalStorageState";
 import { LineChart } from "./LineChart";
@@ -46,7 +47,7 @@ export function GameResearch() {
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([loadGames(dataset), dataset === "nfl" ? loadTeamStats() : Promise.resolve(null)])
+    Promise.all([loadGames(dataset), loadTeamStats(dataset)])
       .then(([g, ts]) => {
         if (!cancelled) setFetchResult({ dataset, games: g, teamStats: ts, error: null });
       })
@@ -114,7 +115,8 @@ export function GameResearch() {
 
   const analysis = useMemo(() => {
     if (!games || !home || !away) return null;
-    const { records, finalRatings, ratingHistory } = runElo(games, DEFAULT_ELO_OPTIONS);
+    const eloOptions = SPORT_ELO_OPTIONS[dataset];
+    const { records, finalRatings, ratingHistory } = runElo(games, eloOptions);
     const homeHistory = ratingHistory.get(home);
     const awayHistory = ratingHistory.get(away);
     if (!homeHistory || !awayHistory) return null;
@@ -135,9 +137,9 @@ export function GameResearch() {
       { iterations: 300, learningRate: 0.5 },
     );
 
-    const homeElo = finalRatings.get(home) ?? DEFAULT_ELO_OPTIONS.initialRating;
-    const awayElo = finalRatings.get(away) ?? DEFAULT_ELO_OPTIONS.initialRating;
-    const eloDiff = homeElo + DEFAULT_ELO_OPTIONS.homeAdvantage - awayElo;
+    const homeElo = finalRatings.get(home) ?? eloOptions.initialRating;
+    const awayElo = finalRatings.get(away) ?? eloOptions.initialRating;
+    const eloDiff = homeElo + eloOptions.homeAdvantage - awayElo;
 
     const currentSeason = games[games.length - 1].season;
     let statFeatures = NEUTRAL_TEAM_STAT_FEATURES;
@@ -183,7 +185,7 @@ export function GameResearch() {
       homeStatTrend: hasTeamStats && teamStats ? teamStatTrend(games, teamStats, home) : [],
       awayStatTrend: hasTeamStats && teamStats ? teamStatTrend(games, teamStats, away) : [],
     };
-  }, [games, teamStats, home, away]);
+  }, [games, teamStats, home, away, dataset]);
 
   // The exact same pick/classify pipeline as This Week, but for whatever
   // odds are typed in above — so any matchup you can research is also one

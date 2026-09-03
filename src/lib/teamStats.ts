@@ -1,11 +1,15 @@
 /**
- * NFL team box-score stats as pregame model features (extends the Elo-only
- * Phase 4 model). CFB has no equivalent bulk per-game stats archive, so this
- * is NFL-only — see WeeklyEdges for CFB's separate, display-only stats via
- * ESPN's live team-statistics endpoint.
+ * Team box-score stats as pregame model features (extends the Elo-only Phase
+ * 4 model). NFL's archive comes from nflverse; CFB's is backfilled from
+ * ESPN's own game-summary box scores (see prepare-data.mjs) and has no
+ * offensive-EPA figure, so offEpa is always 0 for CFB rows — see WeeklyEdges
+ * for CFB's separate, display-only *current-season* stats via ESPN's live
+ * team-statistics endpoint (a different, always-fresh source from the
+ * archive used for training).
  */
 
 import { Game } from "./elo";
+import { Sport } from "./espn";
 
 export interface TeamGameStat {
   gameId: string;
@@ -34,9 +38,9 @@ interface RawTeamStatDataset {
   rows: [string, string, number, number, number][];
 }
 
-/** Fetches public/data/nfl-team-stats.json and shapes it into TeamGameStat[]. */
-export async function loadTeamStats(): Promise<TeamGameStat[]> {
-  const res = await fetch(`/data/nfl-team-stats.json`);
+/** Fetches public/data/{sport}-team-stats.json and shapes it into TeamGameStat[]. */
+export async function loadTeamStats(sport: Sport): Promise<TeamGameStat[]> {
+  const res = await fetch(`/data/${sport}-team-stats.json`);
   if (!res.ok) throw new Error(`Failed to load team stats: ${res.status}`);
   const raw: RawTeamStatDataset = await res.json();
   return raw.rows.map(([gameId, team, totalYards, turnoverMargin, offEpa]) => ({
