@@ -387,13 +387,20 @@ export function TeamPage() {
                   description:
                     "Takeaways minus giveaways. Positive (above the dashed line) means they gained the ball more than they lost it — one of the strongest single predictors of winning, since turnovers hand the opponent free scoring chances.",
                 },
-                {
-                  label: "Offensive EPA",
-                  key: "offEpa" as const,
-                  baseline: 0,
-                  description:
-                    "Expected Points Added per play, summed across the game. Positive (above the dashed line) means the offense added value on average; negative means it lost value relative to what an average play would do in that situation. Always 0 for CFB — ESPN's box score doesn't publish it.",
-                },
+                // CFB's archive has no EPA figure (ESPN's box score doesn't publish it), so
+                // every point is exactly 0 — a flat, uninformative line, not a real trend.
+                // Only include this chart when at least one game actually has a nonzero value.
+                ...(analysis.statTrend.some((p) => p.offEpa !== 0)
+                  ? [
+                      {
+                        label: "Offensive EPA",
+                        key: "offEpa" as const,
+                        baseline: 0,
+                        description:
+                          "Expected Points Added per play, summed across the game. Positive (above the dashed line) means the offense added value on average; negative means it lost value relative to what an average play would do in that situation.",
+                      },
+                    ]
+                  : []),
               ].map(({ label, key, baseline, description }) => (
                 <div key={key} className="mb-4 last:mb-0">
                   <div className="mb-1 text-xs font-medium" style={{ color: "var(--text-secondary)" }}>

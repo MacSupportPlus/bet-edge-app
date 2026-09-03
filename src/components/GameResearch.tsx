@@ -634,12 +634,21 @@ export function GameResearch() {
                   baseline: 0,
                   description: "Takeaways minus giveaways. Positive (above the dashed line) means they gained the ball more than they lost it — one of the strongest single predictors of winning, since turnovers hand the opponent free scoring chances.",
                 },
-                {
-                  label: "Offensive EPA",
-                  key: "offEpa" as const,
-                  baseline: 0,
-                  description: "Expected Points Added per play, summed across the game. Unlike total yards, EPA credits a play for how much it actually helped — a 5-yard gain on 3rd-and-3 counts far more than the same 5 yards on 3rd-and-15. Positive (above the dashed line) means the offense added value on average; negative means it lost value relative to what an average play would do in that situation.",
-                },
+                // CFB's archive has no EPA figure (ESPN's box score doesn't publish it), so
+                // every point is exactly 0 for a CFB matchup — a flat, uninformative line, not
+                // a real trend. Only include this chart when at least one team's game actually
+                // has a nonzero value.
+                ...(analysis.homeStatTrend.some((p) => p.offEpa !== 0) || analysis.awayStatTrend.some((p) => p.offEpa !== 0)
+                  ? [
+                      {
+                        label: "Offensive EPA",
+                        key: "offEpa" as const,
+                        baseline: 0,
+                        description:
+                          "Expected Points Added per play, summed across the game. Unlike total yards, EPA credits a play for how much it actually helped — a 5-yard gain on 3rd-and-3 counts far more than the same 5 yards on 3rd-and-15. Positive (above the dashed line) means the offense added value on average; negative means it lost value relative to what an average play would do in that situation.",
+                      },
+                    ]
+                  : []),
               ].map(({ label, key, baseline, description }) => (
                 <div key={key} className="mb-4 last:mb-0">
                   <div className="mb-1 text-xs font-medium" style={{ color: "var(--text-secondary)" }}>
