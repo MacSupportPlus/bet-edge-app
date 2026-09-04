@@ -2,27 +2,13 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { runElo } from "@/lib/elo";
 import { Sport } from "@/lib/espn";
 import { loadGames } from "@/lib/loadGames";
+import { computeRankings, TeamRankingRow } from "@/lib/rankings";
 import { SPORT_ELO_OPTIONS, SPORT_LABELS } from "@/lib/sportConfig";
 import { loadTeamStats, TeamGameStat } from "@/lib/teamStats";
 
 type SortKey = "elo" | "change" | "record" | "ppg" | "yards" | "turnover" | "epa";
-
-interface TeamRow {
-  team: string;
-  elo: number;
-  seasonStartElo: number | null;
-  change: number | null;
-  wins: number;
-  losses: number;
-  ties: number;
-  ppg: number | null;
-  yardsPerGame: number | null;
-  turnoverMargin: number | null;
-  epaPerGame: number | null;
-}
 
 const OTHER_SPORT: Record<Sport, Sport> = { cfb: "nfl", nfl: "cfb" };
 
@@ -59,85 +45,15 @@ export function RankingsPage({ sport }: { sport: Sport }) {
   const loading = loadResult.sport !== sport || (games === null && error === null);
 
   const analysis = useMemo(() => {
-    if (!games || games.length === 0) return null;
-    const eloOptions = SPORT_ELO_OPTIONS[sport];
-    const { finalRatings, ratingHistory, records } = runElo(games, eloOptions);
-    const currentSeason = games[games.length - 1].season;
-    const hasTeamStats = !!teamGameStats && teamGameStats.length > 0;
+    if (!games) return null;
+    const ranked = computeRankings(sport, games, teamGameStats, SPORT_ELO_OPTIONS[sport]);
+    if (!ranked) return null;
 
-    // CFB's team-stats archive is FBS-vs-FBS only (see prepare-data.mjs) — the
-    // set of teams appearing in it IS the FBS team list, for free, with no
-    // separate division data to maintain. NFL has no such distinction (every
-    // team qualifies).
-    const eligibleTeams =
-      sport === "cfb" && hasTeamStats ? new Set(teamGameStats!.map((s) => s.team)) : null;
-
-    // A team's rating the moment it entered this season — the first current-season
-    // record's own pregame rating (already reflects any season-regression pullback).
-    // Single pass over this season's records, keeping only the first sighting per team.
-    const seasonStartElo = new Map<string, number>();
-    for (const r of records) {
-      if (r.season !== currentSeason) continue;
-      if (!seasonStartElo.has(r.homeTeam)) seasonStartElo.set(r.homeTeam, r.homeEloPre);
-      if (!seasonStartElo.has(r.awayTeam)) seasonStartElo.set(r.awayTeam, r.awayEloPre);
-    }
-
-    // Season stat totals, single pass over this season's games (not per-team —
-    // O(games), not O(teams x games)).
-    const statTotals = new Map<string, { yards: number; turnover: number; epa: number; count: number }>();
-    if (teamGameStats) {
-      const byGameTeam = new Map(teamGameStats.map((s) => [`${s.gameId}|${s.team}`, s]));
-      for (const g of games) {
-        if (g.season !== currentSeason || !g.gameId) continue;
-        for (const team of [g.homeTeam, g.awayTeam]) {
-          const s = byGameTeam.get(`${g.gameId}|${team}`);
-          if (!s) continue;
-          const prev = statTotals.get(team) ?? { yards: 0, turnover: 0, epa: 0, count: 0 };
-          statTotals.set(team, {
-            yards: prev.yards + s.totalYards,
-            turnover: prev.turnover + s.turnoverMargin,
-            epa: prev.epa + s.offEpa,
-            count: prev.count + 1,
-          });
-        }
-      }
-    }
-    const anyRealEpa = [...statTotals.values()].some((t) => t.epa !== 0);
-
-    const rows: TeamRow[] = [];
-    for (const [team, history] of ratingHistory) {
-      if (eligibleTeams && !eligibleTeams.has(team)) continue;
-      const seasonGames = history.filter((g) => g.season === currentSeason);
-      if (seasonGames.length === 0) continue; // inactive this season — not a current ranking
-
-      const wins = seasonGames.filter((g) => g.result === "W").length;
-      const losses = seasonGames.filter((g) => g.result === "L").length;
-      const ties = seasonGames.filter((g) => g.result === "T").length;
-      const ppg = seasonGames.reduce((s, g) => s + g.pointsFor, 0) / seasonGames.length;
-      const elo = finalRatings.get(team) ?? eloOptions.initialRating;
-      const startElo = seasonStartElo.get(team) ?? null;
-      const stats = statTotals.get(team);
-
-      rows.push({
-        team,
-        elo,
-        seasonStartElo: startElo,
-        change: startElo !== null ? elo - startElo : null,
-        wins,
-        losses,
-        ties,
-        ppg,
-        yardsPerGame: stats ? stats.yards / stats.count : null,
-        turnoverMargin: stats ? stats.turnover / stats.count : null,
-        epaPerGame: stats && anyRealEpa ? stats.epa / stats.count : null,
-      });
-    }
-
-    const movers = rows.filter((r) => r.change !== null);
+    const movers = ranked.rows.filter((r) => r.change !== null);
     const risers = [...movers].sort((a, b) => (b.change as number) - (a.change as number)).slice(0, 5);
     const fallers = [...movers].sort((a, b) => (a.change as number) - (b.change as number)).slice(0, 5);
 
-    return { rows, risers, fallers, hasTeamStats, showEpa: anyRealEpa, currentSeason };
+    return { ...ranked, risers, fallers };
   }, [games, teamGameStats, sport]);
 
   const [sortKey, setSortKey] = useState<SortKey>("elo");
@@ -154,7 +70,7 @@ export function RankingsPage({ sport }: { sport: Sport }) {
 
   const sortedRows = useMemo(() => {
     if (!analysis) return [];
-    const value = (r: TeamRow): number => {
+    const value = (r: TeamRankingRow): number => {
       switch (sortKey) {
         case "elo":
           return r.elo;

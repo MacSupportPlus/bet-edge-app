@@ -9,6 +9,7 @@ import { fetchOddsForGames, fetchUpcomingGames, GameOdds, Sport, UpcomingGame } 
 import { loadGames } from "@/lib/loadGames";
 import { predictProba, trainLogisticRegression } from "@/lib/logisticRegression";
 import { formatMoneyline } from "@/lib/odds";
+import { computeRankings } from "@/lib/rankings";
 import { seasonAverage, teamStatTrend } from "@/lib/research";
 import { classifyPick, pickSide } from "@/lib/scanner";
 import { SCHEDULE_LOOKAHEAD_DAYS, SPORT_ELO_OPTIONS, SPORT_LABELS } from "@/lib/sportConfig";
@@ -179,12 +180,17 @@ export function TeamPage() {
       return { game, isHome, opponent: matchedOpponent, matchedOpponent, pTeam, teamMoneyline, status, stake };
     });
 
+    const ranked = computeRankings(sport, games, teamGameStats, eloOptions);
+    const rankIndex = ranked?.rows.findIndex((r) => r.team === team) ?? -1;
+
     return {
       currentElo: finalRatings.get(team) ?? eloOptions.initialRating,
       hasTeamStats,
       recent: [...history].reverse().slice(0, RECENT_GAMES_SHOWN),
       statTrend,
       upcoming,
+      rank: rankIndex >= 0 ? rankIndex + 1 : null,
+      rankOf: ranked?.rows.length ?? null,
     };
   }, [snapshot, sport, team, currentBankroll, fractionalMultiplier]);
 
@@ -311,8 +317,20 @@ export function TeamPage() {
         <>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             <StatTile label="Current Elo" value={analysis.currentElo.toFixed(0)} sub="rating right now" />
+            <StatTile
+              label="Rank"
+              value={analysis.rank ? `#${analysis.rank}` : "—"}
+              sub={analysis.rank ? `of ${analysis.rankOf} this season` : "no games yet this season"}
+            />
             <StatTile label="Last 5" value={analysis.recent.slice(-5).map((g) => g.result).join("-") || "—"} sub="most recent first" />
           </div>
+          {analysis.rank && (
+            <p className="-mt-3 text-xs" style={{ color: "var(--text-muted)" }}>
+              <Link href={`/rankings/${sport}`} className="underline" style={{ color: "var(--series-1)" }}>
+                See the full {SPORT_LABELS[sport]} rankings →
+              </Link>
+            </p>
+          )}
 
           <div className="rounded-lg border p-4" style={{ background: "var(--card-bg)", borderColor: "var(--card-border)" }}>
             <h2 className="mb-1 text-sm font-medium" style={{ color: "var(--text-primary)" }}>
