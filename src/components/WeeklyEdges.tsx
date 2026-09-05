@@ -394,11 +394,19 @@ export function WeeklyEdges({ sport }: { sport: Sport }) {
       };
     });
 
+    // Chronological (kickoff order) within every section, so the week reads
+    // like a schedule — not just the edge section sorted by best bet first.
+    const byKickoff = (a: { game: UpcomingGame }, b: { game: UpcomingGame }) =>
+      new Date(a.game.date).getTime() - new Date(b.game.date).getTime();
+
     const edgeRows = rows.filter((r): r is Extract<Row, { status: "edge" }> => r.status === "edge");
-    edgeRows.sort((a, b) => b.pick.summary.expectancy - a.pick.summary.expectancy);
+    edgeRows.sort(byKickoff);
     const flaggedRows = rows.filter((r): r is Extract<Row, { status: "flagged" }> => r.status === "flagged");
+    flaggedRows.sort(byKickoff);
     const noEdgeRows = rows.filter((r): r is Extract<Row, { status: "no-edge" }> => r.status === "no-edge");
+    noEdgeRows.sort(byKickoff);
     const unavailableRows = rows.filter((r) => r.status === "no-odds" || r.status === "unmatched");
+    unavailableRows.sort(byKickoff);
 
     return {
       edgeRows,

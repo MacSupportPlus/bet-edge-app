@@ -10,6 +10,8 @@ import { currency } from "@/lib/format";
 import { loadGames } from "@/lib/loadGames";
 import { predictProba, sigmoid, trainLogisticRegression } from "@/lib/logisticRegression";
 import { FRACTIONAL_OPTIONS, formatMoneyline, parseMoneyline } from "@/lib/odds";
+import { loadPlayerUsage, primaryStarter, PlayerUsageRow, UsageCategory, USAGE_CATEGORY_LABELS, formatStatLine } from "@/lib/playerUsage";
+import { computeRankings } from "@/lib/rankings";
 import { headToHead, headToHeadRecord, seasonAverage, teamStatTrend } from "@/lib/research";
 import { classifyPick, MAX_TRUSTED_DISAGREEMENT, MAX_TRUSTED_RATIO, pickSide } from "@/lib/scanner";
 import { SPORT_ELO_OPTIONS } from "@/lib/sportConfig";
@@ -20,6 +22,10 @@ import { LineChart } from "./LineChart";
 import { StatTile } from "./StatTile";
 
 type Dataset = "nfl" | "cfb";
+
+// Stable reference for the "no data yet" fallback, so it doesn't retrigger
+// downstream useMemo hooks on every render the way a fresh `[]` would.
+const EMPTY_PLAYER_USAGE: PlayerUsageRow[] = [];
 
 const RECENT_GAMES_SHOWN = 8;
 
@@ -43,17 +49,18 @@ export function GameResearch() {
     dataset: Dataset;
     games: Game[] | null;
     teamStats: TeamGameStat[] | null;
+    playerUsage: PlayerUsageRow[];
     error: string | null;
-  }>({ dataset: "cfb", games: null, teamStats: null, error: null });
+  }>({ dataset: "cfb", games: null, teamStats: null, playerUsage: [], error: null });
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([loadGames(dataset), loadTeamStats(dataset)])
-      .then(([g, ts]) => {
-        if (!cancelled) setFetchResult({ dataset, games: g, teamStats: ts, error: null });
+    Promise.all([loadGames(dataset), loadTeamStats(dataset), loadPlayerUsage(dataset)])
+      .then(([g, ts, pu]) => {
+        if (!cancelled) setFetchResult({ dataset, games: g, teamStats: ts, playerUsage: pu, error: null });
       })
       .catch((e) => {
-        if (!cancelled) setFetchResult({ dataset, games: null, teamStats: null, error: String(e) });
+        if (!cancelled) setFetchResult({ dataset, games: null, teamStats: null, playerUsage: [], error: String(e) });
       });
     return () => {
       cancelled = true;
@@ -111,6 +118,7 @@ export function GameResearch() {
   // populated, or this briefly renders "team not found" instead of loading.
   const games = fetchResult.dataset === dataset ? fetchResult.games : null;
   const teamStats = fetchResult.dataset === dataset ? fetchResult.teamStats : null;
+  const playerUsage = fetchResult.dataset === dataset ? fetchResult.playerUsage : EMPTY_PLAYER_USAGE;
   const error = fetchResult.dataset === dataset ? fetchResult.error : null;
   const loading = fetchResult.dataset !== dataset || (games === null && error === null);
 
@@ -178,6 +186,23 @@ export function GameResearch() {
     const awayScoringAvg = seasonScoringAverage(awayHistory, currentSeason);
     const predictedTotal = homeScoringAvg && awayScoringAvg ? predictTotal(homeScoringAvg, awayScoringAvg) : null;
 
+    // Who's actually been playing, from real box scores — context for a
+    // human to weigh, not a model feature (see playerUsage.ts for why).
+    const USAGE_CATEGORIES: UsageCategory[] = ["passing", "rushing", "receiving", "defensive"];
+    const keyPlayers = USAGE_CATEGORIES.map((category) => ({
+      category,
+      homeStarter: primaryStarter(playerUsage, games, home, category, currentSeason),
+      awayStarter: primaryStarter(playerUsage, games, away, category, currentSeason),
+    })).filter((k) => k.homeStarter !== null || k.awayStarter !== null);
+
+    const ranked = computeRankings(dataset, games, teamStats, eloOptions);
+    const rankFor = (team: string) => {
+      const idx = ranked?.rows.findIndex((r) => r.team === team) ?? -1;
+      return idx >= 0 ? { rank: idx + 1, of: ranked!.rows.length } : null;
+    };
+    const homeRank = rankFor(home);
+    const awayRank = rankFor(away);
+
     return {
       homeElo,
       awayElo,
@@ -190,6 +215,9 @@ export function GameResearch() {
       awayHistory,
       recentHome: recentGames(homeHistory),
       recentAway: recentGames(awayHistory),
+      keyPlayers,
+      homeRank,
+      awayRank,
       h2h,
       h2hRecordHome,
       homeStatTrend: hasTeamStats && teamStats ? teamStatTrend(games, teamStats, home) : [],
@@ -197,7 +225,7 @@ export function GameResearch() {
       predictedMargin,
       predictedTotal,
     };
-  }, [games, teamStats, home, away, dataset]);
+  }, [games, teamStats, playerUsage, home, away, dataset]);
 
   // The exact same pick/classify pipeline as This Week, but for whatever
   // odds are typed in above — so any matchup you can research is also one
@@ -369,8 +397,16 @@ export function GameResearch() {
               What the model says, and why
             </h2>
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-              <StatTile label={`${home} Elo`} value={analysis.homeElo.toFixed(0)} sub="current rating" />
-              <StatTile label={`${away} Elo`} value={analysis.awayElo.toFixed(0)} sub="current rating" />
+              <StatTile
+                label={`${home} Elo`}
+                value={analysis.homeElo.toFixed(0)}
+                sub={analysis.homeRank ? `#${analysis.homeRank.rank} of ${analysis.homeRank.of} this season` : "current rating"}
+              />
+              <StatTile
+                label={`${away} Elo`}
+                value={analysis.awayElo.toFixed(0)}
+                sub={analysis.awayRank ? `#${analysis.awayRank.rank} of ${analysis.awayRank.of} this season` : "current rating"}
+              />
               <StatTile label="Model probability" value={`${(analysis.pHome * 100).toFixed(1)}%`} sub={`${home} to win`} accent="good" />
               <StatTile
                 label="From Elo alone"
@@ -634,6 +670,54 @@ export function GameResearch() {
               </>
             )}
           </div>
+
+          {analysis.keyPlayers.length > 0 && (
+            <div className="rounded-lg border p-4" style={{ background: "var(--card-bg)", borderColor: "var(--card-border)" }}>
+              <h2 className="mb-1 text-sm font-medium" style={{ color: "var(--text-primary)" }}>
+                Key players this season
+              </h2>
+              <p className="mb-3 text-xs" style={{ color: "var(--text-muted)" }}>
+                Who&apos;s actually been on the field, from real box scores — not fed into the
+                model (there&apos;s no reliable way to know before kickoff whether this week&apos;s
+                usual leader is playing), just context for you to weigh yourself.
+              </p>
+              <div className="flex flex-col gap-2 text-xs">
+                {analysis.keyPlayers.map(({ category, homeStarter, awayStarter }) => (
+                  <div key={category} className="rounded-md border px-2.5 py-1.5" style={{ borderColor: "var(--card-border)" }}>
+                    <div className="mb-1" style={{ color: "var(--text-muted)" }}>
+                      {USAGE_CATEGORY_LABELS[category]}
+                    </div>
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                      {[
+                        { team: away, starter: awayStarter },
+                        { team: home, starter: homeStarter },
+                      ].map(({ team, starter }) => (
+                        <div key={team}>
+                          {starter ? (
+                            <>
+                              <div>
+                                <strong style={{ color: "var(--text-primary)" }}>{starter.player}</strong>{" "}
+                                <span style={{ color: "var(--text-muted)" }}>({team})</span>
+                              </div>
+                              <div style={{ color: "var(--text-secondary)" }}>{formatStatLine(category, starter.statLine)}</div>
+                              <div style={{ color: "var(--text-muted)" }}>
+                                led {starter.gamesLed} of {starter.totalGames} game{starter.totalGames === 1 ? "" : "s"}
+                                {!starter.ledMostRecentGame && (
+                                  <span style={{ color: "var(--status-critical)" }}> · someone else led most recently</span>
+                                )}
+                              </div>
+                            </>
+                          ) : (
+                            <span style={{ color: "var(--text-muted)" }}>{team}: no data yet</span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {analysis.hasTeamStats && (analysis.homeStatTrend.length > 0 || analysis.awayStatTrend.length > 0) && (
             <div className="rounded-lg border p-4" style={{ background: "var(--card-bg)", borderColor: "var(--card-border)" }}>
