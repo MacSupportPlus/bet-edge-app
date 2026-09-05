@@ -6,6 +6,7 @@ function game(gameId: string, date: string, season: number, homeTeam: string, aw
   return { gameId, date, season, homeTeam, awayTeam, homeScore: 21, awayScore: 14, neutral: false };
 }
 
+// passing statLine order: [comp, att, yds, td, int]
 describe("primaryStarter", () => {
   const games: Game[] = [
     game("g1", "2024-09-01", 2024, "Ohio State", "Akron"),
@@ -16,18 +17,24 @@ describe("primaryStarter", () => {
 
   it("finds the most-frequent usage leader across the team's games this season", () => {
     const usage: PlayerUsageRow[] = [
-      { gameId: "g1", team: "Ohio State", category: "passing", player: "Julian Sayin", value: 20 },
-      { gameId: "g2", team: "Ohio State", category: "passing", player: "Julian Sayin", value: 25 },
-      { gameId: "g3", team: "Ohio State", category: "passing", player: "Backup Guy", value: 15 },
+      { gameId: "g1", team: "Ohio State", category: "passing", player: "Julian Sayin", statLine: [13, 20, 150, 1, 0] },
+      { gameId: "g2", team: "Ohio State", category: "passing", player: "Julian Sayin", statLine: [18, 25, 200, 2, 1] },
+      { gameId: "g3", team: "Ohio State", category: "passing", player: "Backup Guy", statLine: [10, 15, 90, 0, 1] },
     ];
     const result = primaryStarter(usage, games, "Ohio State", "passing", 2024);
-    expect(result).toEqual({ player: "Julian Sayin", gamesLed: 2, totalGames: 3, ledMostRecentGame: false });
+    expect(result).toEqual({
+      player: "Julian Sayin",
+      gamesLed: 2,
+      totalGames: 3,
+      ledMostRecentGame: false,
+      statLine: [31, 45, 350, 3, 1], // summed only across Sayin's two games
+    });
   });
 
   it("marks ledMostRecentGame true when the primary starter led the latest tracked game", () => {
     const usage: PlayerUsageRow[] = [
-      { gameId: "g1", team: "Ohio State", category: "passing", player: "Julian Sayin", value: 20 },
-      { gameId: "g2", team: "Ohio State", category: "passing", player: "Julian Sayin", value: 25 },
+      { gameId: "g1", team: "Ohio State", category: "passing", player: "Julian Sayin", statLine: [13, 20, 150, 1, 0] },
+      { gameId: "g2", team: "Ohio State", category: "passing", player: "Julian Sayin", statLine: [18, 25, 200, 2, 1] },
     ];
     const result = primaryStarter(usage, games, "Ohio State", "passing", 2024);
     expect(result?.ledMostRecentGame).toBe(true);
@@ -35,12 +42,18 @@ describe("primaryStarter", () => {
 
   it("ignores usage rows from other seasons and other teams", () => {
     const usage: PlayerUsageRow[] = [
-      { gameId: "g4", team: "Ohio State", category: "passing", player: "2023 Guy", value: 30 }, // wrong season
-      { gameId: "g1", team: "Akron", category: "passing", player: "Akron QB", value: 30 }, // wrong team
-      { gameId: "g1", team: "Ohio State", category: "passing", player: "Julian Sayin", value: 20 },
+      { gameId: "g4", team: "Ohio State", category: "passing", player: "2023 Guy", statLine: [20, 30, 300, 3, 0] }, // wrong season
+      { gameId: "g1", team: "Akron", category: "passing", player: "Akron QB", statLine: [20, 30, 300, 3, 0] }, // wrong team
+      { gameId: "g1", team: "Ohio State", category: "passing", player: "Julian Sayin", statLine: [13, 20, 150, 1, 0] },
     ];
     const result = primaryStarter(usage, games, "Ohio State", "passing", 2024);
-    expect(result).toEqual({ player: "Julian Sayin", gamesLed: 1, totalGames: 1, ledMostRecentGame: true });
+    expect(result).toEqual({
+      player: "Julian Sayin",
+      gamesLed: 1,
+      totalGames: 1,
+      ledMostRecentGame: true,
+      statLine: [13, 20, 150, 1, 0],
+    });
   });
 
   it("returns null when there's no usage data for this team/category/season", () => {

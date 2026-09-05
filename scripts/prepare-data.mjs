@@ -292,10 +292,11 @@ async function mapWithConcurrency(items, limit, fn) {
 }
 
 /**
- * Compact schema: [gameId, team, category, player, value] — just the USAGE
- * LEADER in each category, per team per game (not a full box score), enough
- * to answer "who's actually starting/leading this team" without shipping
- * every player's full stat line to the browser.
+ * Compact schema: [gameId, team, category, player, statLine] — just the
+ * USAGE LEADER in each category, per team per game (not a full box score),
+ * with their full stat line for that game so the app can show real numbers,
+ * not just a name. `statLine` meaning is category-specific, see
+ * PLAYER_USAGE_CATEGORIES' `fields` below.
  *
  * "defense" specifically only works because ESPN's box score carries real
  * total-tackle counts per player — cfbfastR's own player_stats archive has
@@ -303,39 +304,91 @@ async function mapWithConcurrency(items, limit, fn) {
  * showed 0-1 total defenders credited with anything (sacks/INTs/PBUs are
  * too sparse to represent a defense), so it's ESPN's box score or nothing.
  */
-const PLAYER_USAGE_SCHEMA = ["gameId", "team", "category", "player", "value"];
-
-/** Categories to extract a usage leader from, and how to read that category's first relevant stat. */
-const PLAYER_USAGE_CATEGORIES = [
-  { category: "passing", statIndex: 0, parse: parseAttemptsFromSplit }, // "13/20" -> 20 attempts
-  { category: "rushing", statIndex: 0, parse: parsePlainNumber }, // CAR
-  { category: "receiving", statIndex: 0, parse: parsePlainNumber }, // REC
-  { category: "defensive", statIndex: 0, parse: parsePlainNumber }, // TOT tackles
-];
+const PLAYER_USAGE_SCHEMA = ["gameId", "team", "category", "player", "statLine"];
 
 function parsePlainNumber(raw) {
   const v = Number(raw);
   return Number.isFinite(v) ? v : null;
 }
 
-function parseAttemptsFromSplit(raw) {
+/** "13/20" -> [13, 20] (completions, attempts); null if not that shape. */
+function parseSplit(raw) {
   if (typeof raw !== "string") return null;
   const parts = raw.split("/");
   if (parts.length !== 2) return null;
-  const v = Number(parts[1]);
-  return Number.isFinite(v) ? v : null;
+  const a = Number(parts[0]);
+  const b = Number(parts[1]);
+  return Number.isFinite(a) && Number.isFinite(b) ? [a, b] : null;
 }
 
-/** The usage leader (highest value) in one team's one statistical category this game, or null if nobody qualifies. */
-function categoryLeader(categoryBlock, statIndex, parse) {
+/**
+ * Categories to extract a usage leader from. `rankStatIndex`/`rankParse`
+ * find WHO leads (attempts/carries/receptions/tackles); `fields` then reads
+ * that leader's full stat line — [ownLabel, statsArrayIndex] pairs, in the
+ * order the app should display them. Indexes match each category's ESPN
+ * box-score `labels` array, confirmed live (see prepare-data.mjs history).
+ */
+const PLAYER_USAGE_CATEGORIES = [
+  {
+    category: "passing",
+    rankStatIndex: 0,
+    rankParse: (raw) => parseSplit(raw)?.[1] ?? null, // rank by attempts
+    // labels: ['C/ATT','YDS','AVG','TD','INT','QBR']
+    fields: [
+      { label: "comp", parse: (stats) => parseSplit(stats[0])?.[0] ?? null },
+      { label: "att", parse: (stats) => parseSplit(stats[0])?.[1] ?? null },
+      { label: "yds", parse: (stats) => parsePlainNumber(stats[1]) },
+      { label: "td", parse: (stats) => parsePlainNumber(stats[3]) },
+      { label: "int", parse: (stats) => parsePlainNumber(stats[4]) },
+    ],
+  },
+  {
+    category: "rushing",
+    rankStatIndex: 0,
+    rankParse: parsePlainNumber, // rank by carries
+    // labels: ['CAR','YDS','AVG','TD','LONG']
+    fields: [
+      { label: "car", parse: (stats) => parsePlainNumber(stats[0]) },
+      { label: "yds", parse: (stats) => parsePlainNumber(stats[1]) },
+      { label: "td", parse: (stats) => parsePlainNumber(stats[3]) },
+    ],
+  },
+  {
+    category: "receiving",
+    rankStatIndex: 0,
+    rankParse: parsePlainNumber, // rank by receptions
+    // labels: ['REC','YDS','AVG','TD','LONG']
+    fields: [
+      { label: "rec", parse: (stats) => parsePlainNumber(stats[0]) },
+      { label: "yds", parse: (stats) => parsePlainNumber(stats[1]) },
+      { label: "td", parse: (stats) => parsePlainNumber(stats[3]) },
+    ],
+  },
+  {
+    category: "defensive",
+    rankStatIndex: 0,
+    rankParse: parsePlainNumber, // rank by total tackles
+    // labels: ['TOT','SOLO','SACKS','TFL','PD','QB HUR','TD']
+    fields: [
+      { label: "tot", parse: (stats) => parsePlainNumber(stats[0]) },
+      { label: "sacks", parse: (stats) => parsePlainNumber(stats[2]) },
+      { label: "tfl", parse: (stats) => parsePlainNumber(stats[3]) },
+    ],
+  },
+];
+
+/** The usage leader (highest-ranked) in one team's one statistical category this game, with their full stat line — or null if nobody qualifies. */
+function categoryLeader(categoryBlock, categoryDef) {
   let best = null;
   for (const a of categoryBlock?.athletes ?? []) {
-    const value = parse(a.stats?.[statIndex]);
+    const value = categoryDef.rankParse(a.stats?.[categoryDef.rankStatIndex]);
     const name = a.athlete?.displayName;
     if (value === null || !name) continue;
-    if (!best || value > best.value) best = { player: name, value };
+    if (!best || value > best.value) best = { player: name, value, stats: a.stats };
   }
-  return best;
+  if (!best) return null;
+  const statLine = categoryDef.fields.map((f) => f.parse(best.stats ?? []) ?? 0);
+  return { player: best.player, statLine };
 }
 
 /**
@@ -384,10 +437,10 @@ async function fetchCfbGameBoxScore(gameId, homeTeam, awayTeam) {
     for (const block of playerBlocks) {
       const team = roleByTeamId[block.team?.id];
       if (!team) continue;
-      for (const { category, statIndex, parse } of PLAYER_USAGE_CATEGORIES) {
-        const categoryBlock = block.statistics?.find((s) => s.name === category);
-        const leader = categoryLeader(categoryBlock, statIndex, parse);
-        if (leader) playerRows.push([gameId, team, category, leader.player, leader.value]);
+      for (const categoryDef of PLAYER_USAGE_CATEGORIES) {
+        const categoryBlock = block.statistics?.find((s) => s.name === categoryDef.category);
+        const leader = categoryLeader(categoryBlock, categoryDef);
+        if (leader) playerRows.push([gameId, team, categoryDef.category, leader.player, leader.statLine]);
       }
     }
   }

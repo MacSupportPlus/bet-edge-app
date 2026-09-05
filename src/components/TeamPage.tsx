@@ -9,7 +9,7 @@ import { fetchOddsForGames, fetchUpcomingGames, GameOdds, Sport, UpcomingGame } 
 import { loadGames } from "@/lib/loadGames";
 import { predictProba, trainLogisticRegression } from "@/lib/logisticRegression";
 import { formatMoneyline } from "@/lib/odds";
-import { loadPlayerUsage, primaryStarter, PlayerUsageRow, UsageCategory, USAGE_CATEGORY_LABELS } from "@/lib/playerUsage";
+import { formatStatLine, loadPlayerUsage, primaryStarter, PlayerUsageRow, UsageCategory, USAGE_CATEGORY_LABELS } from "@/lib/playerUsage";
 import { computeRankings } from "@/lib/rankings";
 import { seasonAverage, teamStatTrend } from "@/lib/research";
 import { classifyPick, pickSide } from "@/lib/scanner";
@@ -418,17 +418,24 @@ export function TeamPage() {
                 model (there&apos;s no reliable way to know before kickoff whether this week&apos;s
                 usual leader is playing), just context for you to weigh yourself.
               </p>
-              <div className="flex flex-col gap-1.5 text-xs">
+              <div className="flex flex-col gap-2 text-xs">
                 {analysis.keyPlayers.map(({ category, starter }) => (
-                  <div key={category} className="flex flex-wrap items-center justify-between gap-2">
-                    <span style={{ color: "var(--text-muted)" }}>{USAGE_CATEGORY_LABELS[category]}</span>
-                    <span style={{ color: "var(--text-secondary)" }}>
-                      <strong style={{ color: "var(--text-primary)" }}>{starter!.player}</strong> — led {starter!.gamesLed} of{" "}
-                      {starter!.totalGames} game{starter!.totalGames === 1 ? "" : "s"}
+                  <div key={category} className="flex flex-col gap-0.5 rounded-md border px-2.5 py-1.5" style={{ borderColor: "var(--card-border)" }}>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span style={{ color: "var(--text-muted)" }}>{USAGE_CATEGORY_LABELS[category]}</span>
+                      <span>
+                        <strong style={{ color: "var(--text-primary)" }}>{starter!.player}</strong>{" "}
+                        <span style={{ color: "var(--text-muted)" }}>
+                          (led {starter!.gamesLed} of {starter!.totalGames} game{starter!.totalGames === 1 ? "" : "s"})
+                        </span>
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span style={{ color: "var(--text-secondary)" }}>{formatStatLine(category, starter!.statLine)}</span>
                       {!starter!.ledMostRecentGame && (
-                        <span style={{ color: "var(--status-critical)" }}> · someone else led most recently</span>
+                        <span style={{ color: "var(--status-critical)" }}>someone else led most recently</span>
                       )}
-                    </span>
+                    </div>
                   </div>
                 ))}
               </div>
