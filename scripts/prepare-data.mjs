@@ -291,8 +291,59 @@ async function mapWithConcurrency(items, limit, fn) {
   await Promise.all(Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, () => worker()));
 }
 
-/** One completed game's box score from ESPN's summary endpoint, as [home row, away row] in TEAM_STAT_SCHEMA shape — or null if ESPN has nothing usable for it. */
-async function fetchCfbBoxScoreRows(gameId, homeTeam, awayTeam) {
+/**
+ * Compact schema: [gameId, team, category, player, value] — just the USAGE
+ * LEADER in each category, per team per game (not a full box score), enough
+ * to answer "who's actually starting/leading this team" without shipping
+ * every player's full stat line to the browser.
+ *
+ * "defense" specifically only works because ESPN's box score carries real
+ * total-tackle counts per player — cfbfastR's own player_stats archive has
+ * no tackle stat at all and was checked and rejected for this: most games
+ * showed 0-1 total defenders credited with anything (sacks/INTs/PBUs are
+ * too sparse to represent a defense), so it's ESPN's box score or nothing.
+ */
+const PLAYER_USAGE_SCHEMA = ["gameId", "team", "category", "player", "value"];
+
+/** Categories to extract a usage leader from, and how to read that category's first relevant stat. */
+const PLAYER_USAGE_CATEGORIES = [
+  { category: "passing", statIndex: 0, parse: parseAttemptsFromSplit }, // "13/20" -> 20 attempts
+  { category: "rushing", statIndex: 0, parse: parsePlainNumber }, // CAR
+  { category: "receiving", statIndex: 0, parse: parsePlainNumber }, // REC
+  { category: "defensive", statIndex: 0, parse: parsePlainNumber }, // TOT tackles
+];
+
+function parsePlainNumber(raw) {
+  const v = Number(raw);
+  return Number.isFinite(v) ? v : null;
+}
+
+function parseAttemptsFromSplit(raw) {
+  if (typeof raw !== "string") return null;
+  const parts = raw.split("/");
+  if (parts.length !== 2) return null;
+  const v = Number(parts[1]);
+  return Number.isFinite(v) ? v : null;
+}
+
+/** The usage leader (highest value) in one team's one statistical category this game, or null if nobody qualifies. */
+function categoryLeader(categoryBlock, statIndex, parse) {
+  let best = null;
+  for (const a of categoryBlock?.athletes ?? []) {
+    const value = parse(a.stats?.[statIndex]);
+    const name = a.athlete?.displayName;
+    if (value === null || !name) continue;
+    if (!best || value > best.value) best = { player: name, value };
+  }
+  return best;
+}
+
+/**
+ * One completed game's box score from ESPN's summary endpoint — team totals
+ * (TEAM_STAT_SCHEMA shape) and per-team usage leaders (PLAYER_USAGE_SCHEMA
+ * shape), from the same fetch. Returns null if ESPN has nothing usable.
+ */
+async function fetchCfbGameBoxScore(gameId, homeTeam, awayTeam) {
   let res;
   try {
     res = await fetch(`https://site.api.espn.com/apis/site/v2/sports/football/college-football/summary?event=${gameId}`);
@@ -321,10 +372,27 @@ async function fetchCfbBoxScoreRows(gameId, homeTeam, awayTeam) {
   const homeTurnovers = stat(home, "turnovers");
   const awayTurnovers = stat(away, "turnovers");
   if (homeYards === null || awayYards === null || homeTurnovers === null || awayTurnovers === null) return null;
-  return [
+  const teamRows = [
     [gameId, homeTeam, homeYards, awayTurnovers - homeTurnovers, 0],
     [gameId, awayTeam, awayYards, homeTurnovers - awayTurnovers, 0],
   ];
+
+  const playerRows = [];
+  const roleByTeamId = { [home.team?.id]: homeTeam, [away.team?.id]: awayTeam };
+  const playerBlocks = data?.boxscore?.players;
+  if (Array.isArray(playerBlocks)) {
+    for (const block of playerBlocks) {
+      const team = roleByTeamId[block.team?.id];
+      if (!team) continue;
+      for (const { category, statIndex, parse } of PLAYER_USAGE_CATEGORIES) {
+        const categoryBlock = block.statistics?.find((s) => s.name === category);
+        const leader = categoryLeader(categoryBlock, statIndex, parse);
+        if (leader) playerRows.push([gameId, team, category, leader.player, leader.value]);
+      }
+    }
+  }
+
+  return { teamRows, playerRows };
 }
 
 // ESPN's box scores are confirmed available back to at least 2005, but
@@ -334,23 +402,41 @@ async function fetchCfbBoxScoreRows(gameId, homeTeam, awayTeam) {
 // the existing file, so this cost is paid once per season added, not repeatedly.
 const CFB_TEAM_STATS_MIN_SEASON = 2018;
 
-async function prepareCfbTeamStats(fbsGames, existingRows) {
-  console.log("Fetching CFB box-score team stats (FBS vs. FBS, backfilled from ESPN)...");
-  const covered = new Set(existingRows.map((r) => r[0])); // gameId — both teams' rows are always written together
-  const eligible = fbsGames.filter((g) => g.season >= CFB_TEAM_STATS_MIN_SEASON && !covered.has(g.gameId));
-  console.log(`  ${covered.size} games already cached, ${eligible.length} new to fetch`);
+/**
+ * Backfills both team-box-score stats and per-team player-usage leaders from
+ * one pass of ESPN fetches. Driven by player-usage coverage (the newer,
+ * incomplete dataset) rather than team-stats coverage, so a game already
+ * cached for team stats but not yet for player usage gets re-fetched once to
+ * pick up the player data too — its team-stat rows are then replaced with
+ * the fresh copy rather than duplicated.
+ */
+async function prepareCfbBoxScoreData(fbsGames, existingTeamRows, existingPlayerRows) {
+  console.log("Fetching CFB box scores (team stats + player-usage leaders, FBS vs. FBS, backfilled from ESPN)...");
+  const playerCovered = new Set(existingPlayerRows.map((r) => r[0]));
+  const eligible = fbsGames.filter((g) => g.season >= CFB_TEAM_STATS_MIN_SEASON && !playerCovered.has(g.gameId));
+  console.log(`  ${playerCovered.size} games already cached, ${eligible.length} new to fetch`);
 
-  const newRows = [];
+  const newTeamRows = [];
+  const newPlayerRows = [];
+  const refetchedGameIds = new Set();
   let done = 0;
   await mapWithConcurrency(eligible, 6, async (g) => {
-    const rows = await fetchCfbBoxScoreRows(g.gameId, g.homeTeam, g.awayTeam);
-    if (rows) newRows.push(...rows);
+    const result = await fetchCfbGameBoxScore(g.gameId, g.homeTeam, g.awayTeam);
+    if (result) {
+      newTeamRows.push(...result.teamRows);
+      newPlayerRows.push(...result.playerRows);
+      refetchedGameIds.add(g.gameId);
+    }
     done++;
     if (done % 500 === 0) console.log(`  ...${done}/${eligible.length}`);
   });
 
-  console.log(`  +${newRows.length / 2} games fetched successfully (${eligible.length - newRows.length / 2} unavailable)`);
-  return { schema: TEAM_STAT_SCHEMA, rows: [...existingRows, ...newRows] };
+  console.log(`  +${refetchedGameIds.size} games fetched successfully (${eligible.length - refetchedGameIds.size} unavailable)`);
+  const keptTeamRows = existingTeamRows.filter((r) => !refetchedGameIds.has(r[0]));
+  return {
+    teamStats: { schema: TEAM_STAT_SCHEMA, rows: [...keptTeamRows, ...newTeamRows] },
+    playerUsage: { schema: PLAYER_USAGE_SCHEMA, rows: [...existingPlayerRows, ...newPlayerRows] },
+  };
 }
 
 /** Reads an existing public/data JSON file's `rows`, or [] if it doesn't exist yet (first run). */
@@ -382,9 +468,16 @@ async function main() {
   console.log(`Wrote public/data/cfb-games.json`);
 
   const existingCfbTeamStatRows = await readExistingRows("cfb-team-stats.json");
-  const cfbTeamStats = await prepareCfbTeamStats(fbsGames, existingCfbTeamStatRows);
+  const existingCfbPlayerUsageRows = await readExistingRows("cfb-player-usage.json");
+  const { teamStats: cfbTeamStats, playerUsage: cfbPlayerUsage } = await prepareCfbBoxScoreData(
+    fbsGames,
+    existingCfbTeamStatRows,
+    existingCfbPlayerUsageRows,
+  );
   await writeFile(path.join(OUT_DIR, "cfb-team-stats.json"), JSON.stringify(cfbTeamStats));
   console.log(`Wrote public/data/cfb-team-stats.json`);
+  await writeFile(path.join(OUT_DIR, "cfb-player-usage.json"), JSON.stringify(cfbPlayerUsage));
+  console.log(`Wrote public/data/cfb-player-usage.json`);
 
   const cfbMarketOdds = await prepareCfbMarketOdds();
   await writeFile(path.join(OUT_DIR, "cfb-market-odds.json"), JSON.stringify(cfbMarketOdds));

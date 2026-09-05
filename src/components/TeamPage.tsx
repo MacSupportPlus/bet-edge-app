@@ -9,6 +9,7 @@ import { fetchOddsForGames, fetchUpcomingGames, GameOdds, Sport, UpcomingGame } 
 import { loadGames } from "@/lib/loadGames";
 import { predictProba, trainLogisticRegression } from "@/lib/logisticRegression";
 import { formatMoneyline } from "@/lib/odds";
+import { loadPlayerUsage, primaryStarter, PlayerUsageRow, UsageCategory, USAGE_CATEGORY_LABELS } from "@/lib/playerUsage";
 import { computeRankings } from "@/lib/rankings";
 import { seasonAverage, teamStatTrend } from "@/lib/research";
 import { classifyPick, pickSide } from "@/lib/scanner";
@@ -48,10 +49,13 @@ interface Snapshot {
   sport: Sport;
   games: Game[];
   teamGameStats: TeamGameStat[] | null;
+  playerUsage: PlayerUsageRow[];
   upcomingGames: UpcomingGame[];
   oddsByEspnId: Map<string, GameOdds | null>;
   error: string | null;
 }
+
+const USAGE_CATEGORIES: UsageCategory[] = ["passing", "rushing", "receiving", "defensive"];
 
 export function TeamPage() {
   const router = useRouter();
@@ -70,9 +74,10 @@ export function TeamPage() {
     let cancelled = false;
     (async () => {
       try {
-        const [games, teamGameStats, schedule] = await Promise.all([
+        const [games, teamGameStats, playerUsage, schedule] = await Promise.all([
           loadGames(sport),
           loadTeamStats(sport),
+          loadPlayerUsage(sport),
           fetchUpcomingGames(sport, SCHEDULE_LOOKAHEAD_DAYS[sport]),
         ]);
         const upcomingGames = schedule.games.filter((g) => {
@@ -81,9 +86,10 @@ export function TeamPage() {
           return home === team || away === team;
         });
         const oddsByEspnId = await fetchOddsForGames(sport, upcomingGames.map((g) => g.espnId));
-        if (!cancelled) setSnapshot({ sport, games, teamGameStats, upcomingGames, oddsByEspnId, error: null });
+        if (!cancelled) setSnapshot({ sport, games, teamGameStats, playerUsage, upcomingGames, oddsByEspnId, error: null });
       } catch (e) {
-        if (!cancelled) setSnapshot({ sport, games: [], teamGameStats: null, upcomingGames: [], oddsByEspnId: new Map(), error: String(e) });
+        if (!cancelled)
+          setSnapshot({ sport, games: [], teamGameStats: null, playerUsage: [], upcomingGames: [], oddsByEspnId: new Map(), error: String(e) });
       }
     })();
     return () => {
@@ -95,7 +101,7 @@ export function TeamPage() {
 
   const analysis = useMemo(() => {
     if (!snapshot || snapshot.sport !== sport || !team) return null;
-    const { games, teamGameStats, upcomingGames, oddsByEspnId } = snapshot;
+    const { games, teamGameStats, playerUsage, upcomingGames, oddsByEspnId } = snapshot;
 
     const eloOptions = SPORT_ELO_OPTIONS[sport];
     const { records, finalRatings, ratingHistory } = runElo(games, eloOptions);
@@ -125,6 +131,13 @@ export function TeamPage() {
     // these) — this team's own season scoring average, for the total estimate.
     const marginModel = fitMarginModel(records);
     const teamScoringAvg = seasonScoringAverage(history, currentSeason);
+
+    // Who's actually been playing this season, from real box scores — context
+    // for a human to weigh, not a model feature (see playerUsage.ts for why).
+    const keyPlayers = USAGE_CATEGORIES.map((category) => ({
+      category,
+      starter: primaryStarter(playerUsage, games, team, category, currentSeason),
+    })).filter((k) => k.starter !== null);
 
     const knownTeams = new Set<string>();
     for (const g of games) {
@@ -202,6 +215,7 @@ export function TeamPage() {
       recent: [...history].reverse().slice(0, RECENT_GAMES_SHOWN),
       statTrend,
       upcoming,
+      keyPlayers,
       rank: rankIndex >= 0 ? rankIndex + 1 : null,
       rankOf: ranked?.rows.length ?? null,
     };
@@ -393,6 +407,33 @@ export function TeamPage() {
               {analysis.recent.length === 0 && <span style={{ color: "var(--text-muted)" }}>No games in the dataset yet.</span>}
             </div>
           </div>
+
+          {analysis.keyPlayers.length > 0 && (
+            <div className="rounded-lg border p-4" style={{ background: "var(--card-bg)", borderColor: "var(--card-border)" }}>
+              <h2 className="mb-1 text-sm font-medium" style={{ color: "var(--text-primary)" }}>
+                Key players this season
+              </h2>
+              <p className="mb-3 text-xs" style={{ color: "var(--text-muted)" }}>
+                Who&apos;s actually been on the field, from real box scores — not fed into the
+                model (there&apos;s no reliable way to know before kickoff whether this week&apos;s
+                usual leader is playing), just context for you to weigh yourself.
+              </p>
+              <div className="flex flex-col gap-1.5 text-xs">
+                {analysis.keyPlayers.map(({ category, starter }) => (
+                  <div key={category} className="flex flex-wrap items-center justify-between gap-2">
+                    <span style={{ color: "var(--text-muted)" }}>{USAGE_CATEGORY_LABELS[category]}</span>
+                    <span style={{ color: "var(--text-secondary)" }}>
+                      <strong style={{ color: "var(--text-primary)" }}>{starter!.player}</strong> — led {starter!.gamesLed} of{" "}
+                      {starter!.totalGames} game{starter!.totalGames === 1 ? "" : "s"}
+                      {!starter!.ledMostRecentGame && (
+                        <span style={{ color: "var(--status-critical)" }}> · someone else led most recently</span>
+                      )}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {analysis.hasTeamStats && analysis.statTrend.length > 0 && (
             <div className="rounded-lg border p-4" style={{ background: "var(--card-bg)", borderColor: "var(--card-border)" }}>
