@@ -77,8 +77,18 @@ export function RiskOfRuinSimulator() {
               onChange={(e) => setPPercent(Number(e.target.value))}
               className="w-full"
             />
-            <span className="w-14 shrink-0 text-right tabular-nums" style={{ color: "var(--text-primary)" }}>
-              {pPercent.toFixed(1)}%
+            <input
+              type="number"
+              min={1}
+              max={99}
+              step={0.5}
+              value={pPercent}
+              onChange={(e) => setPPercent(Math.min(99, Math.max(1, Number(e.target.value))))}
+              className="w-16 shrink-0 rounded-md border px-1.5 py-1 text-right tabular-nums"
+              style={{ borderColor: "var(--card-border)", color: "var(--text-primary)" }}
+            />
+            <span className="shrink-0 text-sm" style={{ color: "var(--text-muted)" }}>
+              %
             </span>
           </div>
         </label>

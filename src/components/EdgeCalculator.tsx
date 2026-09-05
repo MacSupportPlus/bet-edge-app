@@ -54,11 +54,18 @@ export function EdgeCalculator() {
               onChange={(e) => setPPercent(Number(e.target.value))}
               className="w-full"
             />
-            <span
-              className="w-14 shrink-0 text-right tabular-nums"
-              style={{ color: "var(--text-primary)" }}
-            >
-              {pPercent.toFixed(1)}%
+            <input
+              type="number"
+              min={1}
+              max={99}
+              step={0.5}
+              value={pPercent}
+              onChange={(e) => setPPercent(Math.min(99, Math.max(1, Number(e.target.value))))}
+              className="w-16 shrink-0 rounded-md border px-1.5 py-1 text-right tabular-nums"
+              style={{ borderColor: "var(--card-border)", color: "var(--text-primary)" }}
+            />
+            <span className="shrink-0 text-sm" style={{ color: "var(--text-muted)" }}>
+              %
             </span>
           </div>
         </label>
@@ -67,9 +74,9 @@ export function EdgeCalculator() {
           <strong style={{ color: "var(--text-secondary)" }}>What this slider does:</strong> it
           sets how often you believe this bet actually wins. Right now it&apos;s set to{" "}
           <strong style={{ color: "var(--text-secondary)" }}>{pPercent.toFixed(0)} out of every
-          100 times</strong> — like a weighted coin that lands your way that often. Drag it left
-          or right and every number on this page (and the chart below) recalculates instantly for
-          the new value — nothing is saved until you change it again.
+          100 times</strong> — like a weighted coin that lands your way that often. Drag it, or
+          type an exact number, and every number on this page (and the chart below) recalculates
+          instantly for the new value — nothing is saved until you change it again.
         </p>
 
         <label className="flex flex-col gap-1 text-sm">

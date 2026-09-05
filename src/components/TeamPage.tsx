@@ -238,9 +238,10 @@ export function TeamPage() {
   }, [pickSportDraft]);
 
   const teamOptions = teamListResult?.sport === pickSportDraft ? teamListResult.names : [];
+  const pickTeamValid = pickTeamDraft !== "" && teamOptions.includes(pickTeamDraft);
 
   function goToPicked() {
-    if (!pickTeamDraft) return;
+    if (!pickTeamValid) return;
     router.push(`/team?${new URLSearchParams({ sport: pickSportDraft, name: pickTeamDraft }).toString()}`);
   }
 
@@ -279,24 +280,25 @@ export function TeamPage() {
         >
           <label className="flex flex-col gap-1 text-sm sm:col-span-2">
             <span style={{ color: "var(--text-secondary)" }}>Team</span>
-            <select
+            <input
+              type="text"
+              list="team-page-options"
               value={pickTeamDraft}
               onChange={(e) => setPickTeamDraft(e.target.value)}
+              placeholder="Type or choose…"
               className="rounded-md border px-2 py-1.5"
               style={{ borderColor: "var(--card-border)", color: "var(--text-primary)", background: "var(--card-bg)" }}
-            >
-              <option value="">Choose…</option>
+            />
+            <datalist id="team-page-options">
               {teamOptions.map((t) => (
-                <option key={t} value={t}>
-                  {t}
-                </option>
+                <option key={t} value={t} />
               ))}
-            </select>
+            </datalist>
           </label>
           <div className="flex items-end">
             <button
               onClick={goToPicked}
-              disabled={!pickTeamDraft}
+              disabled={!pickTeamValid}
               className="w-full rounded-md px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
               style={{ background: "var(--series-1)" }}
             >

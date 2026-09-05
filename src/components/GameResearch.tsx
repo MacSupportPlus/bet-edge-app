@@ -252,8 +252,12 @@ export function GameResearch() {
     router.push(`/research?dataset=${next}`);
   }
 
+  const teamOptionSet = useMemo(() => new Set(teamOptions), [teamOptions]);
+  const pickHomeValid = pickHome !== "" && teamOptionSet.has(pickHome);
+  const pickAwayValid = pickAway !== "" && teamOptionSet.has(pickAway);
+
   function goToPicked() {
-    if (!pickHome || !pickAway || pickHome === pickAway) return;
+    if (!pickHomeValid || !pickAwayValid || pickHome === pickAway) return;
     router.push(`/research?${new URLSearchParams({ dataset, home: pickHome, away: pickAway }).toString()}`);
   }
 
@@ -304,40 +308,37 @@ export function GameResearch() {
           >
             <label className="flex flex-col gap-1 text-sm">
               <span style={{ color: "var(--text-secondary)" }}>Away team</span>
-              <select
+              <input
+                type="text"
+                list="research-team-options"
                 value={pickAway}
                 onChange={(e) => setPickAway(e.target.value)}
+                placeholder="Type or choose…"
                 className="rounded-md border px-2 py-1.5"
                 style={{ borderColor: "var(--card-border)", color: "var(--text-primary)", background: "var(--card-bg)" }}
-              >
-                <option value="">Choose…</option>
-                {teamOptions.map((t) => (
-                  <option key={t} value={t}>
-                    {t}
-                  </option>
-                ))}
-              </select>
+              />
             </label>
             <label className="flex flex-col gap-1 text-sm">
               <span style={{ color: "var(--text-secondary)" }}>Home team</span>
-              <select
+              <input
+                type="text"
+                list="research-team-options"
                 value={pickHome}
                 onChange={(e) => setPickHome(e.target.value)}
+                placeholder="Type or choose…"
                 className="rounded-md border px-2 py-1.5"
                 style={{ borderColor: "var(--card-border)", color: "var(--text-primary)", background: "var(--card-bg)" }}
-              >
-                <option value="">Choose…</option>
-                {teamOptions.map((t) => (
-                  <option key={t} value={t}>
-                    {t}
-                  </option>
-                ))}
-              </select>
+              />
             </label>
+            <datalist id="research-team-options">
+              {teamOptions.map((t) => (
+                <option key={t} value={t} />
+              ))}
+            </datalist>
             <div className="flex items-end">
               <button
                 onClick={goToPicked}
-                disabled={!pickHome || !pickAway || pickHome === pickAway}
+                disabled={!pickHomeValid || !pickAwayValid || pickHome === pickAway}
                 className="w-full rounded-md px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
                 style={{ background: "var(--series-1)" }}
               >
