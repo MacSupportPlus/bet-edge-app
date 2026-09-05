@@ -641,11 +641,15 @@ export function Guide() {
             moneylines are pre-filled from the live odds already; either way, they&apos;re always
             editable, so you can check a line you found elsewhere or a purely hypothetical one. Spread
             and total are there just for your own reference and don&apos;t feed the calculation —
-            everything here runs on moneylines, the same as the Edge Calculator.
+            everything here runs on moneylines, the same as the Edge Calculator. Below that,
+            &quot;Model implies&quot; shows the model&apos;s own spread and total estimate — purely
+            informational, not a bet recommendation. Checked against real historical market lines,
+            the spread estimate runs about 8 points off the real number on average (sometimes much
+            more), the total about 4 — useful context, not a substitute for an actual line.
           </Field>
           <Field term="Model probability, decomposed">
             Not just a number — how much of it came from Elo alone, versus how much the added team
-            stats (NFL only) moved it. Lets you judge whether the model&apos;s conviction rests on
+            stats moved it. Lets you judge whether the model&apos;s conviction rests on
             one signal or several agreeing.
           </Field>
           <Field term="Elo rating trend">

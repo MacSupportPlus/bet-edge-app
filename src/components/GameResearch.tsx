@@ -13,6 +13,7 @@ import { FRACTIONAL_OPTIONS, formatMoneyline, parseMoneyline } from "@/lib/odds"
 import { headToHead, headToHeadRecord, seasonAverage, teamStatTrend } from "@/lib/research";
 import { classifyPick, MAX_TRUSTED_DISAGREEMENT, MAX_TRUSTED_RATIO, pickSide } from "@/lib/scanner";
 import { SPORT_ELO_OPTIONS } from "@/lib/sportConfig";
+import { fitMarginModel, formatSpread, predictMargin, predictTotal, seasonScoringAverage } from "@/lib/spreadModel";
 import { computeTeamStatDiffs, loadTeamStats, NEUTRAL_TEAM_STAT_FEATURES, TeamGameStat } from "@/lib/teamStats";
 import { useLocalStorageState } from "@/lib/useLocalStorageState";
 import { LineChart } from "./LineChart";
@@ -168,6 +169,15 @@ export function GameResearch() {
 
     const recentGames = (history: typeof homeHistory) => [...history].reverse().slice(0, RECENT_GAMES_SHOWN);
 
+    // Informational only — see spreadModel.ts for the honest accuracy numbers
+    // behind these (measured against real historical market lines). Neither
+    // has a cover-probability/edge calculation attached, unlike the moneyline
+    // pick above.
+    const predictedMargin = predictMargin(fitMarginModel(records), eloDiff);
+    const homeScoringAvg = seasonScoringAverage(homeHistory, currentSeason);
+    const awayScoringAvg = seasonScoringAverage(awayHistory, currentSeason);
+    const predictedTotal = homeScoringAvg && awayScoringAvg ? predictTotal(homeScoringAvg, awayScoringAvg) : null;
+
     return {
       homeElo,
       awayElo,
@@ -184,6 +194,8 @@ export function GameResearch() {
       h2hRecordHome,
       homeStatTrend: hasTeamStats && teamStats ? teamStatTrend(games, teamStats, home) : [],
       awayStatTrend: hasTeamStats && teamStats ? teamStatTrend(games, teamStats, away) : [],
+      predictedMargin,
+      predictedTotal,
     };
   }, [games, teamStats, home, away, dataset]);
 
@@ -443,6 +455,16 @@ export function GameResearch() {
                 />
               </label>
             </div>
+
+            <p className="mt-2 text-xs" style={{ color: "var(--text-muted)" }}>
+              <strong style={{ color: "var(--text-secondary)" }}>Model implies:</strong>{" "}
+              {formatSpread(home, away, analysis.predictedMargin)}
+              {analysis.predictedTotal !== null && <> · O/U {analysis.predictedTotal.toFixed(1)}</>} — informational
+              only, not a bet recommendation. Checked against real historical market lines, this kind of
+              spread estimate runs ~8 points off the real number on average (sometimes much more), while the
+              total estimate runs ~4 points off. Treat the total as a rough-but-useful guide and the spread as
+              context at best, not a substitute for an actual line.
+            </p>
 
             <div className="mt-3 flex flex-wrap items-center gap-2">
               <span className="text-xs" style={{ color: "var(--text-muted)" }}>

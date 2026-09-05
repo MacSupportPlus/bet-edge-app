@@ -22,6 +22,7 @@ import { FRACTIONAL_OPTIONS, formatMoneyline, parseMoneyline } from "@/lib/odds"
 import { headToHead, headToHeadRecord, seasonAverage, teamStatTrend } from "@/lib/research";
 import { classifyPick, MAX_TRUSTED_DISAGREEMENT, MAX_TRUSTED_RATIO, pickSide, PickResult } from "@/lib/scanner";
 import { SCHEDULE_LOOKAHEAD_DAYS, SPORT_ELO_OPTIONS, SPORT_LABELS } from "@/lib/sportConfig";
+import { fitMarginModel, predictMargin, predictTotal, seasonScoringAverage } from "@/lib/spreadModel";
 import { matchKeyFor, matchTeamName } from "@/lib/teamMatch";
 import { computeTeamStatDiffs, loadTeamStats, NEUTRAL_TEAM_STAT_FEATURES, TeamGameStat } from "@/lib/teamStats";
 import { useLocalStorageState } from "@/lib/useLocalStorageState";
@@ -45,7 +46,17 @@ interface Snapshot {
 }
 
 type Row =
-  | { game: UpcomingGame; status: "edge"; pick: PickResult; stake: number; provider: string; matchedHome: string; matchedAway: string }
+  | {
+      game: UpcomingGame;
+      status: "edge";
+      pick: PickResult;
+      stake: number;
+      provider: string;
+      matchedHome: string;
+      matchedAway: string;
+      predictedMargin: number;
+      predictedTotal: number | null;
+    }
   | { game: UpcomingGame; status: "flagged"; pick: PickResult; provider: string; matchedHome: string; matchedAway: string }
   | { game: UpcomingGame; status: "no-edge"; pHome: number; provider: string; matchedHome: string; matchedAway: string }
   | { game: UpcomingGame; status: "no-odds"; pHome: number; matchedHome: string; matchedAway: string }
@@ -298,6 +309,10 @@ export function WeeklyEdges({ sport }: { sport: Sport }) {
       { iterations: 300, learningRate: 0.5 },
     );
 
+    // Informational spread/total estimates only (see spreadModel.ts for the
+    // measured accuracy behind these) — no cover-probability or edge attached.
+    const marginModel = fitMarginModel(records);
+
     // Each team's current-season-to-date stat average, computed once per team
     // and cached — used both as a live prediction feature and for the "season
     // so far" display line, so what's shown matches what the model actually saw.
@@ -360,7 +375,23 @@ export function WeeklyEdges({ sport }: { sport: Sport }) {
         return { game, status: "no-edge", pHome, provider: odds.provider, matchedHome, matchedAway };
       if (classification.status === "flagged")
         return { game, status: "flagged", pick, provider: odds.provider, matchedHome, matchedAway };
-      return { game, status: "edge", pick, stake: classification.stake, provider: odds.provider, matchedHome, matchedAway };
+
+      const predictedMargin = predictMargin(marginModel, eloDiff);
+      const homeScoringAvg = seasonScoringAverage(ratingHistory.get(matchedHome), currentSeason);
+      const awayScoringAvg = seasonScoringAverage(ratingHistory.get(matchedAway), currentSeason);
+      const predictedTotal = homeScoringAvg && awayScoringAvg ? predictTotal(homeScoringAvg, awayScoringAvg) : null;
+
+      return {
+        game,
+        status: "edge",
+        pick,
+        stake: classification.stake,
+        provider: odds.provider,
+        matchedHome,
+        matchedAway,
+        predictedMargin,
+        predictedTotal,
+      };
     });
 
     const edgeRows = rows.filter((r): r is Extract<Row, { status: "edge" }> => r.status === "edge");
@@ -622,6 +653,14 @@ export function WeeklyEdges({ sport }: { sport: Sport }) {
                       <StatTile label="Expected value" value={`+${(row.pick.summary.expectancy * 100).toFixed(1)}%`} accent="good" />
                       <StatTile label="Recommended stake" value={currency(row.stake)} />
                     </div>
+                    <p className="mt-2 text-xs" style={{ color: "var(--text-muted)" }}>
+                      <strong style={{ color: "var(--text-secondary)" }}>Model implies:</strong>{" "}
+                      {row.predictedMargin >= 0
+                        ? `${row.game.homeTeam} -${row.predictedMargin.toFixed(1)}`
+                        : `${row.game.awayTeam} -${(-row.predictedMargin).toFixed(1)}`}
+                      {row.predictedTotal !== null && <> · O/U {row.predictedTotal.toFixed(1)}</>} — informational only
+                      (typically ~8 and ~4 points off real market lines respectively), not part of the bet above.
+                    </p>
                     <div className="mt-3 flex flex-wrap items-center gap-2">
                       <Link
                         href={`/tracker?${query}`}

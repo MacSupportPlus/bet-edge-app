@@ -60,6 +60,8 @@ export interface EloGameRecord {
   eloDiff: number;
   /** 1 if the home team won, 0 if the away team won. Ties are dropped upstream. */
   homeWin: 0 | 1;
+  /** Home score minus away score — the actual margin, for fitting a spread estimate against eloDiff. */
+  margin: number;
 }
 
 function expectedScore(ratingA: number, ratingB: number): number {
@@ -150,6 +152,7 @@ export function runElo(games: Game[], options: EloOptions = DEFAULT_ELO_OPTIONS)
         awayEloPre,
         eloDiff: homeEloPre + homeAdv - awayEloPre,
         homeWin,
+        margin: game.homeScore - game.awayScore,
       });
     }
 

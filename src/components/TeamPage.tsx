@@ -12,6 +12,7 @@ import { formatMoneyline } from "@/lib/odds";
 import { computeRankings } from "@/lib/rankings";
 import { seasonAverage, teamStatTrend } from "@/lib/research";
 import { classifyPick, pickSide } from "@/lib/scanner";
+import { fitMarginModel, predictMargin, predictTotal, seasonScoringAverage } from "@/lib/spreadModel";
 import { SCHEDULE_LOOKAHEAD_DAYS, SPORT_ELO_OPTIONS, SPORT_LABELS } from "@/lib/sportConfig";
 import { matchKeyFor, matchTeamName } from "@/lib/teamMatch";
 import { computeTeamStatDiffs, loadTeamStats, NEUTRAL_TEAM_STAT_FEATURES, TeamGameStat } from "@/lib/teamStats";
@@ -120,6 +121,11 @@ export function TeamPage() {
     const statTrend = hasTeamStats && teamGameStats ? teamStatTrend(games, teamGameStats, team) : [];
     const teamSeasonAvg = hasTeamStats ? seasonAverage(statTrend, currentSeason) : null;
 
+    // Informational only (see spreadModel.ts for the measured accuracy behind
+    // these) — this team's own season scoring average, for the total estimate.
+    const marginModel = fitMarginModel(records);
+    const teamScoringAvg = seasonScoringAverage(history, currentSeason);
+
     const knownTeams = new Set<string>();
     for (const g of games) {
       knownTeams.add(g.homeTeam);
@@ -140,6 +146,8 @@ export function TeamPage() {
           teamMoneyline: null as number | null,
           status: "unmatched" as const,
           stake: 0,
+          predictedMargin: null as number | null,
+          predictedTotal: null as number | null,
         };
       }
 
@@ -177,7 +185,12 @@ export function TeamPage() {
         if (classification.status === "edge" && pick.side === (isHome ? "home" : "away")) stake = classification.stake;
       }
 
-      return { game, isHome, opponent: matchedOpponent, matchedOpponent, pTeam, teamMoneyline, status, stake };
+      const homeMargin = predictMargin(marginModel, eloDiff);
+      const predictedMargin = isHome ? homeMargin : -homeMargin; // this team's own perspective, positive = favored
+      const oppScoringAvg = seasonScoringAverage(ratingHistory.get(matchedOpponent), currentSeason);
+      const predictedTotal = teamScoringAvg && oppScoringAvg ? predictTotal(teamScoringAvg, oppScoringAvg) : null;
+
+      return { game, isHome, opponent: matchedOpponent, matchedOpponent, pTeam, teamMoneyline, status, stake, predictedMargin, predictedTotal };
     });
 
     const ranked = computeRankings(sport, games, teamGameStats, eloOptions);
@@ -451,7 +464,9 @@ export function TeamPage() {
             </h2>
             <p className="mb-3 text-xs" style={{ color: "var(--text-muted)" }}>
               Same model as This Week and Research, scoped to just this team&apos;s next{" "}
-              {SCHEDULE_LOOKAHEAD_DAYS[sport]} days.
+              {SCHEDULE_LOOKAHEAD_DAYS[sport]} days. Margin/total are informational estimates only
+              (typically ~8 and ~4 points off real market lines, respectively) — not a bet
+              recommendation the way the moneyline edge is.
             </p>
             {analysis.upcoming.length === 0 && (
               <p className="text-xs" style={{ color: "var(--text-muted)" }}>
@@ -473,6 +488,10 @@ export function TeamPage() {
                       <> · model {(row.pTeam * 100).toFixed(0)}% {team}</>
                     )}
                     {row.teamMoneyline !== null && <> ({formatMoneyline(row.teamMoneyline)})</>}
+                    {row.predictedMargin !== null && (
+                      <> · {row.predictedMargin >= 0 ? `${team} -${row.predictedMargin.toFixed(1)}` : `${row.opponent} -${(-row.predictedMargin).toFixed(1)}`}</>
+                    )}
+                    {row.predictedTotal !== null && <> · O/U {row.predictedTotal.toFixed(1)}</>}
                   </span>
                   <span className="flex items-center gap-2">
                     {row.status === "edge" && (
