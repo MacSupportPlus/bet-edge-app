@@ -20,6 +20,7 @@ import { computeTeamStatDiffs, loadTeamStats, NEUTRAL_TEAM_STAT_FEATURES, TeamGa
 import { useLocalStorageState } from "@/lib/useLocalStorageState";
 import { LineChart } from "./LineChart";
 import { StatTile } from "./StatTile";
+import { TeamAutocomplete } from "./TeamAutocomplete";
 
 const RECENT_GAMES_SHOWN = 8;
 
@@ -280,20 +281,7 @@ export function TeamPage() {
         >
           <label className="flex flex-col gap-1 text-sm sm:col-span-2">
             <span style={{ color: "var(--text-secondary)" }}>Team</span>
-            <input
-              type="text"
-              list="team-page-options"
-              value={pickTeamDraft}
-              onChange={(e) => setPickTeamDraft(e.target.value)}
-              placeholder="Type or choose…"
-              className="rounded-md border px-2 py-1.5"
-              style={{ borderColor: "var(--card-border)", color: "var(--text-primary)", background: "var(--card-bg)" }}
-            />
-            <datalist id="team-page-options">
-              {teamOptions.map((t) => (
-                <option key={t} value={t} />
-              ))}
-            </datalist>
+            <TeamAutocomplete value={pickTeamDraft} onChange={setPickTeamDraft} options={teamOptions} placeholder="Type or choose…" />
           </label>
           <div className="flex items-end">
             <button

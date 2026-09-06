@@ -53,7 +53,10 @@ export function RankingsPage({ sport }: { sport: Sport }) {
     const risers = [...movers].sort((a, b) => (b.change as number) - (a.change as number)).slice(0, 5);
     const fallers = [...movers].sort((a, b) => (a.change as number) - (b.change as number)).slice(0, 5);
 
-    return { ...ranked, risers, fallers };
+    const bestOffenses = [...ranked.rows].sort((a, b) => b.offenseRating - a.offenseRating).slice(0, 5);
+    const bestDefenses = [...ranked.rows].sort((a, b) => b.defenseRating - a.defenseRating).slice(0, 5);
+
+    return { ...ranked, risers, fallers, bestOffenses, bestDefenses };
   }, [games, teamGameStats, sport]);
 
   const [sortKey, setSortKey] = useState<SortKey>("elo");
@@ -192,6 +195,39 @@ export function RankingsPage({ sport }: { sport: Sport }) {
                   </div>
                 ))}
                 {analysis.fallers.length === 0 && <span style={{ color: "var(--text-muted)" }}>Not enough games played yet.</span>}
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div className="rounded-lg border p-4" style={{ background: "var(--card-bg)", borderColor: "var(--card-border)" }}>
+              <h2 className="mb-2 text-sm font-medium" style={{ color: "var(--text-primary)" }}>
+                Best offenses (opponent-adjusted)
+              </h2>
+              <div className="flex flex-col gap-1.5 text-xs">
+                {analysis.bestOffenses.map((r) => (
+                  <div key={r.team} className="flex items-center justify-between gap-2">
+                    <Link href={`/team?${new URLSearchParams({ sport, name: r.team }).toString()}`} style={{ color: "var(--text-secondary)" }}>
+                      {r.team}
+                    </Link>
+                    <span style={{ color: "var(--status-good)" }}>{fmtSigned(r.offenseRating, 1)} pts/g vs. expected</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="rounded-lg border p-4" style={{ background: "var(--card-bg)", borderColor: "var(--card-border)" }}>
+              <h2 className="mb-2 text-sm font-medium" style={{ color: "var(--text-primary)" }}>
+                Best defenses (opponent-adjusted)
+              </h2>
+              <div className="flex flex-col gap-1.5 text-xs">
+                {analysis.bestDefenses.map((r) => (
+                  <div key={r.team} className="flex items-center justify-between gap-2">
+                    <Link href={`/team?${new URLSearchParams({ sport, name: r.team }).toString()}`} style={{ color: "var(--text-secondary)" }}>
+                      {r.team}
+                    </Link>
+                    <span style={{ color: "var(--status-good)" }}>{fmtSigned(r.defenseRating, 1)} pts/g vs. expected</span>
+                  </div>
+                ))}
               </div>
             </div>
           </div>
