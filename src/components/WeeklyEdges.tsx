@@ -618,7 +618,7 @@ export function WeeklyEdges({ sport }: { sport: Sport }) {
             <div className="mt-3 flex flex-col gap-3">
               {analysis.edgeRows.map((row) => {
                 const query = new URLSearchParams({
-                  desc: `${row.pick.team} ML (${formatMoneyline(row.pick.moneyline)}) — ${row.game.awayTeam} @ ${row.game.homeTeam}`,
+                  desc: `${row.pick.team} ML (${formatMoneyline(row.pick.moneyline)}) — ${row.matchedAway} @ ${row.matchedHome}`,
                   p: (row.pick.summary.p * 100).toFixed(1),
                   b: row.pick.b.toFixed(4),
                   stake: row.stake.toFixed(0),

@@ -21,6 +21,8 @@ export interface BetEntry {
   b: number; // net odds
   stake: number; // dollars actually staked
   outcome: BetOutcome;
+  /** True if this bet's outcome was set by autoGradeBets.ts rather than a manual Win/Loss click. */
+  settledAuto?: boolean;
 }
 
 export interface BankrollPoint {

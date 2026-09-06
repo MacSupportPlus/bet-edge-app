@@ -1,15 +1,19 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import {
   BetEntry,
+  BetOutcome,
   drawdownSeries,
   realizedPath,
   summarizeBankroll,
   theoreticalPath,
 } from "@/lib/bankroll";
+import { autoGradeBets } from "@/lib/autoGradeBets";
+import { Game } from "@/lib/elo";
 import { currency } from "@/lib/format";
+import { loadGames } from "@/lib/loadGames";
 import { useLocalStorageState } from "@/lib/useLocalStorageState";
 import { BankrollChart } from "./BankrollChart";
 import { StatTile } from "./StatTile";
@@ -58,6 +62,45 @@ export function BankrollTracker() {
     };
   });
 
+  // Auto-settles pending bets against our own historical archives, which
+  // refresh daily — this is a static, backend-less app, so "automatically
+  // update when a game finishes" means "check on load," not a push
+  // notification. Only touches bets logged via a "Log this bet" link (their
+  // description is parseable); a manually-typed one stays manual-only.
+  const [archives, setArchives] = useState<{ cfb: Game[]; nfl: Game[] } | null>(null);
+  const [lastGradedCount, setLastGradedCount] = useState<number | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([loadGames("cfb"), loadGames("nfl")])
+      .then(([cfb, nfl]) => {
+        if (cancelled) return;
+        setArchives({ cfb, nfl });
+        // setBets's updater runs synchronously as part of this same call, so
+        // `count` below is already correct by the time we read it.
+        let count = 0;
+        setBets((prev) => {
+          const result = autoGradeBets(prev, cfb, nfl);
+          count = result.gradedCount;
+          return result.gradedCount > 0 ? result.bets : prev;
+        });
+        setLastGradedCount(count);
+      })
+      .catch(() => {
+        // No archives available — auto-grading just stays a no-op; manual Win/Loss still works.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [setBets]);
+
+  function checkForResults() {
+    if (!archives) return;
+    const { bets: graded, gradedCount } = autoGradeBets(bets, archives.cfb, archives.nfl);
+    setBets(graded);
+    setLastGradedCount(gradedCount);
+  }
+
   const realized = useMemo(() => realizedPath(startingBankroll, bets), [startingBankroll, bets]);
   const theoretical = useMemo(
     () => theoreticalPath(startingBankroll, bets, fractionalMultiplier),
@@ -86,8 +129,8 @@ export function BankrollTracker() {
     setForm(emptyForm());
   }
 
-  function settleBet(id: string, outcome: "win" | "loss") {
-    setBets((prev) => prev.map((b) => (b.id === id ? { ...b, outcome } : b)));
+  function settleBet(id: string, outcome: BetOutcome) {
+    setBets((prev) => prev.map((b) => (b.id === id ? { ...b, outcome, settledAuto: outcome === "pending" ? undefined : b.settledAuto } : b)));
   }
 
   function deleteBet(id: string) {
@@ -103,7 +146,29 @@ export function BankrollTracker() {
         <p className="mt-1 text-sm" style={{ color: "var(--text-secondary)" }}>
           Log real bets and compare your realized bankroll against what fractional-Kelly
           sizing would have produced with the same picks. Saved locally in this browser.
+          Pending bets logged via a &quot;Log this bet&quot; link auto-settle here once their game
+          shows up final in our own data — no push notifications (this app has no backend to send
+          them from), just a check against the archive each time you open this page.
         </p>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2 text-xs" style={{ color: "var(--text-muted)" }}>
+        {!archives && <span>Checking pending bets against final scores…</span>}
+        {archives && lastGradedCount !== null && (
+          <span>
+            {lastGradedCount > 0
+              ? `Auto-settled ${lastGradedCount} bet${lastGradedCount === 1 ? "" : "s"} just now.`
+              : "No pending bets had a final score to check against."}
+          </span>
+        )}
+        <button
+          onClick={checkForResults}
+          disabled={!archives}
+          className="ml-auto rounded-md border px-2 py-1 disabled:opacity-50"
+          style={{ borderColor: "var(--card-border)" }}
+        >
+          Check for results
+        </button>
       </div>
 
       {/* starting bankroll */}
@@ -300,15 +365,27 @@ export function BankrollTracker() {
                     </button>
                   </div>
                 ) : (
-                  <span
-                    className="rounded-full px-2 py-0.5 text-xs font-medium"
-                    style={{
-                      background: bet.outcome === "win" ? "var(--status-good)" : "var(--status-critical)",
-                      color: "white",
-                    }}
-                  >
-                    {bet.outcome === "win" ? `+${currency(bet.stake * bet.b)}` : `-${currency(bet.stake)}`}
-                  </span>
+                  <div className="flex items-center gap-1">
+                    <span
+                      className="rounded-full px-2 py-0.5 text-xs font-medium"
+                      style={{
+                        background: bet.outcome === "win" ? "var(--status-good)" : "var(--status-critical)",
+                        color: "white",
+                      }}
+                    >
+                      {bet.outcome === "win" ? `+${currency(bet.stake * bet.b)}` : `-${currency(bet.stake)}`}
+                    </span>
+                    {bet.settledAuto && (
+                      <button
+                        onClick={() => settleBet(bet.id, "pending")}
+                        title="Auto-settled from final score — click if this looks wrong"
+                        className="text-xs underline"
+                        style={{ color: "var(--text-muted)" }}
+                      >
+                        auto — not right?
+                      </button>
+                    )}
+                  </div>
                 )}
                 <button
                   onClick={() => deleteBet(bet.id)}

@@ -112,6 +112,14 @@ export function GameResearch() {
   const [bets] = useLocalStorageState<BetEntry[]>("bankroll-tracker:bets", []);
   const [fractionalMultiplier, setFractionalMultiplier] = useLocalStorageState("weekly-edges:fractional", 0.5);
   const currentBankroll = useMemo(() => summarizeBankroll(startingBankroll, bets).currentBankroll, [startingBankroll, bets]);
+  // Optional override for "what if my bankroll were different" — never
+  // written back to bankroll-tracker:starting, so it can't drift from what
+  // the Tracker page actually shows.
+  const [bankrollOverrideInput, setBankrollOverrideInput] = useState("");
+  const effectiveBankroll =
+    bankrollOverrideInput.trim() !== "" && !Number.isNaN(Number(bankrollOverrideInput))
+      ? Math.max(0, Number(bankrollOverrideInput))
+      : currentBankroll;
 
   // fetchResult's initial `dataset` value matches the default dataset, so a
   // plain `fetchResult.dataset !== dataset` check reads false before the
@@ -254,9 +262,9 @@ export function GameResearch() {
     const awayMl = parseMoneyline(awayMoneylineInput);
     if (homeMl === null || awayMl === null) return null;
     const pick = pickSide(analysis.pHome, homeMl, awayMl, home, away);
-    const classification = classifyPick(pick, currentBankroll, fractionalMultiplier);
+    const classification = classifyPick(pick, effectiveBankroll, fractionalMultiplier);
     return { pick, classification };
-  }, [analysis, homeMoneylineInput, awayMoneylineInput, home, away, currentBankroll, fractionalMultiplier]);
+  }, [analysis, homeMoneylineInput, awayMoneylineInput, home, away, effectiveBankroll, fractionalMultiplier]);
 
   const teamOptions = useMemo(() => {
     if (!games) return [];
@@ -558,7 +566,24 @@ export function GameResearch() {
                   {opt.label}
                 </button>
               ))}
+              <label className="ml-auto flex items-center gap-1.5 text-xs">
+                <span style={{ color: "var(--text-muted)" }}>Bankroll:</span>
+                <input
+                  type="number"
+                  min={0}
+                  placeholder={currency(currentBankroll)}
+                  value={bankrollOverrideInput}
+                  onChange={(e) => setBankrollOverrideInput(e.target.value)}
+                  className="w-24 rounded-md border px-1.5 py-1 tabular-nums"
+                  style={{ borderColor: "var(--card-border)", color: "var(--text-primary)", background: "var(--card-bg)" }}
+                />
+              </label>
             </div>
+            <p className="mt-1 text-xs" style={{ color: "var(--text-muted)" }}>
+              Defaults to your real Tracker bankroll ({currency(currentBankroll)}) — type a number
+              above to size this pick against a hypothetical bankroll instead. Doesn&apos;t change
+              what the Tracker itself shows.
+            </p>
 
             {!betCheck && (
               <p className="mt-3 text-xs" style={{ color: "var(--text-muted)" }}>
