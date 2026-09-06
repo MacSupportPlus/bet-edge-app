@@ -24,6 +24,7 @@ import { classifyPick, MAX_TRUSTED_DISAGREEMENT, MAX_TRUSTED_RATIO, pickSide, Pi
 import { SCHEDULE_LOOKAHEAD_DAYS, SPORT_ELO_OPTIONS, SPORT_LABELS } from "@/lib/sportConfig";
 import { fitMarginModel, predictMargin, predictTotal, seasonScoringAverage } from "@/lib/spreadModel";
 import { matchKeyFor, matchTeamName } from "@/lib/teamMatch";
+import { computeRankings } from "@/lib/rankings";
 import { computeTeamStatDiffs, loadTeamStats, NEUTRAL_TEAM_STAT_FEATURES, TeamGameStat } from "@/lib/teamStats";
 import { useLocalStorageState } from "@/lib/useLocalStorageState";
 import { Callout } from "./Callout";
@@ -110,6 +111,13 @@ function formatTeamStatsLine(stats: TeamSeasonStats | null | undefined): string 
 }
 
 const OTHER_SPORT: Record<Sport, Sport> = { cfb: "nfl", nfl: "cfb" };
+
+/** "(#N)" next to a team name, from the same Elo-based leaderboard the Rankings page shows — omitted when the team isn't ranked (e.g. no games yet this season). */
+function RankBadge({ team, rankByTeam }: { team: string; rankByTeam: Map<string, { rank: number; of: number }> }) {
+  const r = rankByTeam.get(team);
+  if (!r) return null;
+  return <span style={{ color: "var(--text-muted)" }}> (#{r.rank})</span>;
+}
 
 /**
  * Every posted price here comes from one sportsbook via ESPN — if you're
@@ -408,6 +416,9 @@ export function WeeklyEdges({ sport }: { sport: Sport }) {
     const unavailableRows = rows.filter((r) => r.status === "no-odds" || r.status === "unmatched");
     unavailableRows.sort(byKickoff);
 
+    const ranked = computeRankings(sport, historicalGames, teamGameStats, eloOptions);
+    const rankByTeam = new Map(ranked?.rows.map((r, i) => [r.team, { rank: i + 1, of: ranked.rows.length }]));
+
     return {
       edgeRows,
       flaggedRows,
@@ -418,6 +429,7 @@ export function WeeklyEdges({ sport }: { sport: Sport }) {
       historicalGames,
       hasTeamStats,
       teamStatsDisplayFor,
+      rankByTeam,
     };
   }, [snapshot, loading, sport, currentBankroll, fractionalMultiplier]);
 
@@ -632,7 +644,9 @@ export function WeeklyEdges({ sport }: { sport: Sport }) {
                     <div className="flex flex-wrap items-start justify-between gap-2">
                       <div>
                         <div className="text-sm font-medium" style={{ color: "var(--text-primary)" }}>
-                          {row.game.awayTeam} at {row.game.homeTeam}
+                          {row.game.awayTeam}
+                          <RankBadge team={row.matchedAway} rankByTeam={analysis.rankByTeam} /> at {row.game.homeTeam}
+                          <RankBadge team={row.matchedHome} rankByTeam={analysis.rankByTeam} />
                         </div>
                         <div className="text-xs" style={{ color: "var(--text-muted)" }}>
                           {formatKickoff(row.game.date)} · odds via {row.provider}
@@ -731,7 +745,9 @@ export function WeeklyEdges({ sport }: { sport: Sport }) {
                   <div key={row.game.espnId} className="flex flex-col gap-1 rounded-md border px-2 py-1.5" style={{ borderColor: "var(--card-border)" }}>
                     <div className="flex flex-wrap items-center gap-x-2">
                       <span>
-                        {row.game.awayTeam} at {row.game.homeTeam} — model says {row.pick.team}{" "}
+                        {row.game.awayTeam}
+                        <RankBadge team={row.matchedAway} rankByTeam={analysis.rankByTeam} /> at {row.game.homeTeam}
+                        <RankBadge team={row.matchedHome} rankByTeam={analysis.rankByTeam} /> — model says {row.pick.team}{" "}
                         {(row.pick.summary.p * 100).toFixed(0)}%, market implies only{" "}
                         {(row.pick.marketImplied * 100).toFixed(0)}% ({formatMoneyline(row.pick.moneyline)}). Not shown
                         as a bet — this gap almost certainly means the model is missing something.
@@ -775,7 +791,10 @@ export function WeeklyEdges({ sport }: { sport: Sport }) {
                   <div key={row.game.espnId} className="flex flex-col gap-1 rounded-md border px-2 py-1.5" style={{ borderColor: "var(--card-border)" }}>
                     <div className="flex flex-wrap items-center gap-x-2">
                       <span>
-                        {row.game.awayTeam} at {row.game.homeTeam} — model {(row.pHome * 100).toFixed(0)}% home, priced
+                        {row.game.awayTeam}
+                        <RankBadge team={row.matchedAway} rankByTeam={analysis.rankByTeam} /> at {row.game.homeTeam}
+                        <RankBadge team={row.matchedHome} rankByTeam={analysis.rankByTeam} /> — model {(row.pHome * 100).toFixed(0)}% home,
+                        priced
                         efficiently at {row.provider}
                       </span>
                       <Link
@@ -813,7 +832,10 @@ export function WeeklyEdges({ sport }: { sport: Sport }) {
                   <div key={row.game.espnId} className="flex flex-col gap-1 rounded-md border px-2 py-1.5" style={{ borderColor: "var(--card-border)" }}>
                     <div className="flex flex-wrap items-center gap-x-2">
                       <span>
-                        {row.game.awayTeam} at {row.game.homeTeam} —{" "}
+                        {row.game.awayTeam}
+                        {row.status === "no-odds" && <RankBadge team={row.matchedAway} rankByTeam={analysis.rankByTeam} />} at{" "}
+                        {row.game.homeTeam}
+                        {row.status === "no-odds" && <RankBadge team={row.matchedHome} rankByTeam={analysis.rankByTeam} />} —{" "}
                         {row.status === "unmatched" ? "team not found in historical data" : "odds not posted yet"}
                       </span>
                       {row.status === "no-odds" && (
@@ -846,7 +868,7 @@ export function WeeklyEdges({ sport }: { sport: Sport }) {
         </>
       )}
 
-      {reportCard && (
+      {reportCard && analysis && (
         <div className="rounded-lg border p-4" style={{ background: "var(--card-bg)", borderColor: "var(--card-border)" }}>
           <h2 className="mb-1 text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
             How would we have done? — last {RETRO_LOOKBACK_DAYS} days
@@ -888,7 +910,9 @@ export function WeeklyEdges({ sport }: { sport: Sport }) {
                     style={{ borderColor: "var(--card-border)" }}
                   >
                     <span style={{ color: "var(--text-secondary)" }}>
-                      {row.record.awayTeam} at {row.record.homeTeam} — model{" "}
+                      {row.record.awayTeam}
+                      <RankBadge team={row.record.awayTeam} rankByTeam={analysis.rankByTeam} /> at {row.record.homeTeam}
+                      <RankBadge team={row.record.homeTeam} rankByTeam={analysis.rankByTeam} /> — model{" "}
                       {(predictedHome ? row.pHome : 1 - row.pHome) * 100 | 0}%{" "}
                       {predictedHome ? row.record.homeTeam : row.record.awayTeam}, actual winner:{" "}
                       {row.actualHomeWin ? row.record.homeTeam : row.record.awayTeam}
