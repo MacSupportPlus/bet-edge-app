@@ -202,6 +202,12 @@ export function GameResearch() {
     };
     const homeRank = rankFor(home);
     const awayRank = rankFor(away);
+    const offDefFor = (team: string) => {
+      const row = ranked?.rows.find((r) => r.team === team);
+      return row ? { offenseRank: row.offenseRank, offenseRating: row.offenseRating, defenseRank: row.defenseRank, defenseRating: row.defenseRating, of: ranked!.rows.length } : null;
+    };
+    const homeOffDef = offDefFor(home);
+    const awayOffDef = offDefFor(away);
 
     return {
       homeElo,
@@ -218,6 +224,8 @@ export function GameResearch() {
       keyPlayers,
       homeRank,
       awayRank,
+      homeOffDef,
+      awayOffDef,
       h2h,
       h2hRecordHome,
       homeStatTrend: hasTeamStats && teamStats ? teamStatTrend(games, teamStats, home) : [],
@@ -433,6 +441,25 @@ export function GameResearch() {
               This is the same Elo + logistic regression model as the Probability Model tab — no injuries,
               weather, or lineup news factored in.
             </p>
+            {(analysis.homeOffDef || analysis.awayOffDef) && (
+              <p className="mt-2 text-xs" style={{ color: "var(--text-muted)" }}>
+                <strong style={{ color: "var(--text-secondary)" }}>Season rank (opponent-adjusted):</strong>{" "}
+                {analysis.homeOffDef && (
+                  <>
+                    {home} offense #{analysis.homeOffDef.offenseRank} of {analysis.homeOffDef.of}, defense #
+                    {analysis.homeOffDef.defenseRank} of {analysis.homeOffDef.of}
+                  </>
+                )}
+                {analysis.homeOffDef && analysis.awayOffDef && " · "}
+                {analysis.awayOffDef && (
+                  <>
+                    {away} offense #{analysis.awayOffDef.offenseRank} of {analysis.awayOffDef.of}, defense #
+                    {analysis.awayOffDef.defenseRank} of {analysis.awayOffDef.of}
+                  </>
+                )}{" "}
+                — see Rankings for the full board.
+              </p>
+            )}
           </div>
 
           <div className="rounded-lg border p-4" style={{ background: "var(--card-bg)", borderColor: "var(--card-border)" }}>
@@ -672,16 +699,20 @@ export function GameResearch() {
             )}
           </div>
 
-          {analysis.keyPlayers.length > 0 && (
-            <div className="rounded-lg border p-4" style={{ background: "var(--card-bg)", borderColor: "var(--card-border)" }}>
-              <h2 className="mb-1 text-sm font-medium" style={{ color: "var(--text-primary)" }}>
-                Key players this season
-              </h2>
-              <p className="mb-3 text-xs" style={{ color: "var(--text-muted)" }}>
-                Who&apos;s actually been on the field, from real box scores — not fed into the
-                model (there&apos;s no reliable way to know before kickoff whether this week&apos;s
-                usual leader is playing), just context for you to weigh yourself.
+          <div className="rounded-lg border p-4" style={{ background: "var(--card-bg)", borderColor: "var(--card-border)" }}>
+            <h2 className="mb-1 text-sm font-medium" style={{ color: "var(--text-primary)" }}>
+              Key players this season
+            </h2>
+            <p className="mb-3 text-xs" style={{ color: "var(--text-muted)" }}>
+              Who&apos;s actually been on the field, from real box scores — not fed into the
+              model (there&apos;s no reliable way to know before kickoff whether this week&apos;s
+              usual leader is playing), just context for you to weigh yourself.
+            </p>
+            {analysis.keyPlayers.length === 0 ? (
+              <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+                Neither team has played a game yet this season — check back once they have.
               </p>
+            ) : (
               <div className="flex flex-col gap-2 text-xs">
                 {analysis.keyPlayers.map(({ category, homeStarter, awayStarter }) => (
                   <div key={category} className="rounded-md border px-2.5 py-1.5" style={{ borderColor: "var(--card-border)" }}>
@@ -717,8 +748,8 @@ export function GameResearch() {
                   </div>
                 ))}
               </div>
-            </div>
-          )}
+            )}
+          </div>
 
           {analysis.hasTeamStats && (analysis.homeStatTrend.length > 0 || analysis.awayStatTrend.length > 0) && (
             <div className="rounded-lg border p-4" style={{ background: "var(--card-bg)", borderColor: "var(--card-border)" }}>

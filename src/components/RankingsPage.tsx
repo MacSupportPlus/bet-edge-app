@@ -215,11 +215,14 @@ export function RankingsPage({ sport }: { sport: Sport }) {
                 Best offenses (opponent-adjusted)
               </h2>
               <div className="flex flex-col gap-1.5 text-xs">
-                {analysis.bestOffenses.map((r) => (
+                {analysis.bestOffenses.map((r, i) => (
                   <div key={r.team} className="flex items-center justify-between gap-2">
-                    <Link href={`/team?${new URLSearchParams({ sport, name: r.team }).toString()}`} style={{ color: "var(--text-secondary)" }}>
-                      {r.team}
-                    </Link>
+                    <span>
+                      <span style={{ color: "var(--text-muted)" }}>#{i + 1}</span>{" "}
+                      <Link href={`/team?${new URLSearchParams({ sport, name: r.team }).toString()}`} style={{ color: "var(--text-secondary)" }}>
+                        {r.team}
+                      </Link>
+                    </span>
                     <span style={{ color: "var(--status-good)" }}>{fmtSigned(r.offenseRating, 1)} pts/g vs. expected</span>
                   </div>
                 ))}
@@ -230,11 +233,14 @@ export function RankingsPage({ sport }: { sport: Sport }) {
                 Best defenses (opponent-adjusted)
               </h2>
               <div className="flex flex-col gap-1.5 text-xs">
-                {analysis.bestDefenses.map((r) => (
+                {analysis.bestDefenses.map((r, i) => (
                   <div key={r.team} className="flex items-center justify-between gap-2">
-                    <Link href={`/team?${new URLSearchParams({ sport, name: r.team }).toString()}`} style={{ color: "var(--text-secondary)" }}>
-                      {r.team}
-                    </Link>
+                    <span>
+                      <span style={{ color: "var(--text-muted)" }}>#{i + 1}</span>{" "}
+                      <Link href={`/team?${new URLSearchParams({ sport, name: r.team }).toString()}`} style={{ color: "var(--text-secondary)" }}>
+                        {r.team}
+                      </Link>
+                    </span>
                     <span style={{ color: "var(--status-good)" }}>{fmtSigned(r.defenseRating, 1)} pts/g vs. expected</span>
                   </div>
                 ))}
@@ -292,13 +298,19 @@ export function RankingsPage({ sport }: { sport: Sport }) {
                       className="px-3 py-1.5 text-right tabular-nums"
                       style={{ color: r.offenseRating >= 0 ? "var(--status-good)" : "var(--status-critical)" }}
                     >
-                      {fmtSigned(r.offenseRating, 1)}
+                      {fmtSigned(r.offenseRating, 1)}{" "}
+                      <span style={{ color: "var(--text-muted)" }}>
+                        (#{r.offenseRank} of {analysis.rows.length})
+                      </span>
                     </td>
                     <td
                       className="px-3 py-1.5 text-right tabular-nums"
                       style={{ color: r.defenseRating >= 0 ? "var(--status-good)" : "var(--status-critical)" }}
                     >
-                      {fmtSigned(r.defenseRating, 1)}
+                      {fmtSigned(r.defenseRating, 1)}{" "}
+                      <span style={{ color: "var(--text-muted)" }}>
+                        (#{r.defenseRank} of {analysis.rows.length})
+                      </span>
                     </td>
                     {analysis.hasTeamStats && (
                       <td className="px-3 py-1.5 text-right tabular-nums" style={{ color: "var(--text-secondary)" }}>

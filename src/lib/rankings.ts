@@ -34,6 +34,9 @@ export interface TeamRankingRow {
   /** Same idea, in yards instead of points — null without a team-stats archive. */
   offenseYardsRating: number | null;
   defenseYardsRating: number | null;
+  /** 1 = best offense/defense in this list (by offenseRating/defenseRating), independent of whatever order `rows` itself is sorted in. */
+  offenseRank: number;
+  defenseRank: number;
 }
 
 export interface RankingsResult {
@@ -210,8 +213,14 @@ export function computeRankings(
       defenseRating: avg(ratingsByTeam.get(team)?.defPts ?? []),
       offenseYardsRating: byGameTeam ? avg(ratingsByTeam.get(team)?.offYds ?? []) : null,
       defenseYardsRating: byGameTeam ? avg(ratingsByTeam.get(team)?.defYds ?? []) : null,
+      // placeholder — assigned below once every row exists, independent of `rows`' own sort order.
+      offenseRank: 0,
+      defenseRank: 0,
     });
   }
+
+  [...rows].sort((a, b) => b.offenseRating - a.offenseRating).forEach((r, i) => (r.offenseRank = i + 1));
+  [...rows].sort((a, b) => b.defenseRating - a.defenseRating).forEach((r, i) => (r.defenseRank = i + 1));
 
   rows.sort((a, b) => b.elo - a.elo);
 

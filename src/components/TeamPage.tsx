@@ -40,6 +40,10 @@ function fmtKickoff(iso: string): string {
   }
 }
 
+function fmtSignedRating(n: number): string {
+  return `${n >= 0 ? "+" : ""}${n.toFixed(1)}`;
+}
+
 function researchUrl(sport: Sport, home: string, away: string, espnId?: string): string {
   const query = new URLSearchParams({ dataset: sport, home, away });
   if (espnId) query.set("espnId", espnId);
@@ -222,6 +226,8 @@ export function TeamPage() {
       rankOf: ranked?.rows.length ?? null,
       offenseRating: rankedRow?.offenseRating ?? null,
       defenseRating: rankedRow?.defenseRating ?? null,
+      offenseRank: rankedRow?.offenseRank ?? null,
+      defenseRank: rankedRow?.defenseRank ?? null,
     };
   }, [snapshot, sport, team, currentBankroll, fractionalMultiplier]);
 
@@ -346,16 +352,16 @@ export function TeamPage() {
             {analysis.offenseRating !== null && (
               <StatTile
                 label="Offense rtg"
-                value={`${analysis.offenseRating >= 0 ? "+" : ""}${analysis.offenseRating.toFixed(1)}`}
-                sub="pts/g vs. expected"
+                value={analysis.offenseRank ? `#${analysis.offenseRank}` : `${analysis.offenseRating >= 0 ? "+" : ""}${analysis.offenseRating.toFixed(1)}`}
+                sub={analysis.offenseRank ? `of ${analysis.rankOf} · ${fmtSignedRating(analysis.offenseRating)} pts/g vs. exp.` : "pts/g vs. expected"}
                 accent={analysis.offenseRating >= 0 ? "good" : "critical"}
               />
             )}
             {analysis.defenseRating !== null && (
               <StatTile
                 label="Defense rtg"
-                value={`${analysis.defenseRating >= 0 ? "+" : ""}${analysis.defenseRating.toFixed(1)}`}
-                sub="pts/g vs. expected"
+                value={analysis.defenseRank ? `#${analysis.defenseRank}` : `${analysis.defenseRating >= 0 ? "+" : ""}${analysis.defenseRating.toFixed(1)}`}
+                sub={analysis.defenseRank ? `of ${analysis.rankOf} · ${fmtSignedRating(analysis.defenseRating)} pts/g vs. exp.` : "pts/g vs. expected"}
                 accent={analysis.defenseRating >= 0 ? "good" : "critical"}
               />
             )}
@@ -424,16 +430,20 @@ export function TeamPage() {
             </div>
           </div>
 
-          {analysis.keyPlayers.length > 0 && (
-            <div className="rounded-lg border p-4" style={{ background: "var(--card-bg)", borderColor: "var(--card-border)" }}>
-              <h2 className="mb-1 text-sm font-medium" style={{ color: "var(--text-primary)" }}>
-                Key players this season
-              </h2>
-              <p className="mb-3 text-xs" style={{ color: "var(--text-muted)" }}>
-                Who&apos;s actually been on the field, from real box scores — not fed into the
-                model (there&apos;s no reliable way to know before kickoff whether this week&apos;s
-                usual leader is playing), just context for you to weigh yourself.
+          <div className="rounded-lg border p-4" style={{ background: "var(--card-bg)", borderColor: "var(--card-border)" }}>
+            <h2 className="mb-1 text-sm font-medium" style={{ color: "var(--text-primary)" }}>
+              Key players this season
+            </h2>
+            <p className="mb-3 text-xs" style={{ color: "var(--text-muted)" }}>
+              Who&apos;s actually been on the field, from real box scores — not fed into the
+              model (there&apos;s no reliable way to know before kickoff whether this week&apos;s
+              usual leader is playing), just context for you to weigh yourself.
+            </p>
+            {analysis.keyPlayers.length === 0 ? (
+              <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+                No games played yet this season — check back once they&apos;ve played.
               </p>
+            ) : (
               <div className="flex flex-col gap-2 text-xs">
                 {analysis.keyPlayers.map(({ category, starter }) => (
                   <div key={category} className="flex flex-col gap-0.5 rounded-md border px-2.5 py-1.5" style={{ borderColor: "var(--card-border)" }}>
@@ -455,8 +465,8 @@ export function TeamPage() {
                   </div>
                 ))}
               </div>
-            </div>
-          )}
+            )}
+          </div>
 
           {analysis.hasTeamStats && analysis.statTrend.length > 0 && (
             <div className="rounded-lg border p-4" style={{ background: "var(--card-bg)", borderColor: "var(--card-border)" }}>

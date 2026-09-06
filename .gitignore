@@ -24,6 +24,11 @@
 .DS_Store
 *.pem
 
+# iCloud Drive "conflicted copy" duplicates (this project lives under
+# ~/Desktop, which iCloud syncs) — e.g. "out 2/", "GameResearch 2.tsx".
+* [0-9]
+* [0-9].*
+
 # debug
 npm-debug.log*
 yarn-debug.log*
