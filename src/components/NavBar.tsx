@@ -8,6 +8,7 @@ const LINKS = [
   { href: "/this-week", label: "This Week" },
   { href: "/picks", label: "Picks" },
   { href: "/rankings", label: "Rankings" },
+  { href: "/players", label: "Players" },
   { href: "/", label: "Edge Calculator" },
   { href: "/simulator", label: "Risk of Ruin" },
   { href: "/tracker", label: "Bankroll Tracker" },

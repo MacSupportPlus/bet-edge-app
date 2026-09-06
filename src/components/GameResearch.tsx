@@ -10,6 +10,7 @@ import { currency } from "@/lib/format";
 import { loadGames } from "@/lib/loadGames";
 import { predictProba, sigmoid, trainLogisticRegression } from "@/lib/logisticRegression";
 import { FRACTIONAL_OPTIONS, formatMoneyline, parseMoneyline } from "@/lib/odds";
+import { computeQbRankings } from "@/lib/playerRankings";
 import { loadPlayerUsage, primaryStarter, PlayerUsageRow, UsageCategory, USAGE_CATEGORY_LABELS, formatStatLine } from "@/lib/playerUsage";
 import { computeRankings } from "@/lib/rankings";
 import { headToHead, headToHeadRecord, seasonAverage, teamStatTrend } from "@/lib/research";
@@ -189,6 +190,13 @@ export function GameResearch() {
     // Who's actually been playing, from real box scores — context for a
     // human to weigh, not a model feature (see playerUsage.ts for why).
     const USAGE_CATEGORIES: UsageCategory[] = ["passing", "rushing", "receiving", "defensive"];
+    const qbRankings = computeQbRankings(games, playerUsage, eloOptions);
+    const qbRankFor = (team: string, player: string): number | null => {
+      const idx = qbRankings?.rows.findIndex((r) => r.team === team && r.player === player) ?? -1;
+      return idx >= 0 ? idx + 1 : null;
+    };
+    const qbRankOf = qbRankings?.rows.length ?? null;
+
     const keyPlayers = USAGE_CATEGORIES.map((category) => ({
       category,
       homeStarter: primaryStarter(playerUsage, games, home, category, currentSeason),
@@ -222,6 +230,8 @@ export function GameResearch() {
       recentHome: recentGames(homeHistory),
       recentAway: recentGames(awayHistory),
       keyPlayers,
+      qbRankFor,
+      qbRankOf,
       homeRank,
       awayRank,
       homeOffDef,
@@ -737,6 +747,19 @@ export function GameResearch() {
                                 {!starter.ledMostRecentGame && (
                                   <span style={{ color: "var(--status-critical)" }}> · someone else led most recently</span>
                                 )}
+                                {category === "passing" &&
+                                  (() => {
+                                    const qbRank = analysis.qbRankFor(team, starter.player);
+                                    return qbRank ? (
+                                      <>
+                                        {" "}
+                                        ·{" "}
+                                        <Link href={`/players/${dataset}`} style={{ color: "var(--series-1)" }}>
+                                          #{qbRank} of {analysis.qbRankOf} QBs
+                                        </Link>
+                                      </>
+                                    ) : null;
+                                  })()}
                               </div>
                             </>
                           ) : (
