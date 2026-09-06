@@ -4,6 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { Sport } from "@/lib/espn";
 import { loadGames } from "@/lib/loadGames";
+import { computeQbRankings } from "@/lib/playerRankings";
+import { loadPlayerUsage, PlayerUsageRow } from "@/lib/playerUsage";
 import { computeRankings, TeamRankingRow } from "@/lib/rankings";
 import { SPORT_ELO_OPTIONS, SPORT_LABELS } from "@/lib/sportConfig";
 import { loadTeamStats, TeamGameStat } from "@/lib/teamStats";
@@ -11,6 +13,10 @@ import { loadTeamStats, TeamGameStat } from "@/lib/teamStats";
 type SortKey = "elo" | "change" | "record" | "ppg" | "offRating" | "defRating" | "yards" | "turnover" | "epa";
 
 const OTHER_SPORT: Record<Sport, Sport> = { cfb: "nfl", nfl: "cfb" };
+
+// Stable reference for the "no data yet" fallback, so it doesn't retrigger
+// downstream useMemo hooks on every render the way a fresh [] would.
+const EMPTY_PLAYER_USAGE: PlayerUsageRow[] = [];
 
 function fmtSigned(n: number, decimals = 0): string {
   const v = n.toFixed(decimals);
@@ -22,17 +28,18 @@ export function RankingsPage({ sport }: { sport: Sport }) {
     sport: Sport;
     games: Awaited<ReturnType<typeof loadGames>> | null;
     teamGameStats: TeamGameStat[] | null;
+    playerUsage: PlayerUsageRow[];
     error: string | null;
-  }>({ sport, games: null, teamGameStats: null, error: null });
+  }>({ sport, games: null, teamGameStats: null, playerUsage: [], error: null });
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([loadGames(sport), loadTeamStats(sport)])
-      .then(([games, teamGameStats]) => {
-        if (!cancelled) setLoadResult({ sport, games, teamGameStats, error: null });
+    Promise.all([loadGames(sport), loadTeamStats(sport), loadPlayerUsage(sport)])
+      .then(([games, teamGameStats, playerUsage]) => {
+        if (!cancelled) setLoadResult({ sport, games, teamGameStats, playerUsage, error: null });
       })
       .catch((e) => {
-        if (!cancelled) setLoadResult({ sport, games: null, teamGameStats: null, error: String(e) });
+        if (!cancelled) setLoadResult({ sport, games: null, teamGameStats: null, playerUsage: [], error: String(e) });
       });
     return () => {
       cancelled = true;
@@ -41,6 +48,7 @@ export function RankingsPage({ sport }: { sport: Sport }) {
 
   const games = loadResult.sport === sport ? loadResult.games : null;
   const teamGameStats = loadResult.sport === sport ? loadResult.teamGameStats : null;
+  const playerUsage = loadResult.sport === sport ? loadResult.playerUsage : EMPTY_PLAYER_USAGE;
   const error = loadResult.sport === sport ? loadResult.error : null;
   const loading = loadResult.sport !== sport || (games === null && error === null);
 
@@ -56,8 +64,10 @@ export function RankingsPage({ sport }: { sport: Sport }) {
     const bestOffenses = [...ranked.rows].sort((a, b) => b.offenseRating - a.offenseRating).slice(0, 5);
     const bestDefenses = [...ranked.rows].sort((a, b) => b.defenseRating - a.defenseRating).slice(0, 5);
 
-    return { ...ranked, risers, fallers, bestOffenses, bestDefenses };
-  }, [games, teamGameStats, sport]);
+    const qbRankings = computeQbRankings(games, playerUsage, SPORT_ELO_OPTIONS[sport]);
+
+    return { ...ranked, risers, fallers, bestOffenses, bestDefenses, qbRankings };
+  }, [games, teamGameStats, playerUsage, sport]);
 
   const [sortKey, setSortKey] = useState<SortKey>("elo");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
@@ -321,6 +331,95 @@ export function RankingsPage({ sport }: { sport: Sport }) {
             per-game average, so padding stats against weak teams doesn&apos;t look the same as doing it against
             strong ones. Click any column to sort by it.
           </p>
+
+          <div className="rounded-lg border p-4" style={{ background: "var(--card-bg)", borderColor: "var(--card-border)" }}>
+            <h2 className="mb-1 text-sm font-medium" style={{ color: "var(--text-primary)" }}>
+              QB Rankings (opponent-adjusted)
+            </h2>
+            <p className="mb-3 text-xs" style={{ color: "var(--text-muted)" }}>
+              Passing yards per game compared to what an average starter does against the same
+              strength of opponent — same bucketing as the team ratings above. QB only: rushing,
+              receiving, and defensive usage rotate through committees too much to responsibly rank
+              the way a starting QB job doesn&apos;t. Needs at least {analysis.qbRankings?.minGamesLed ?? 5}{" "}
+              games led this season before a QB shows up here, so an early-season small sample
+              doesn&apos;t masquerade as a real season.
+            </p>
+            {analysis.qbRankings && analysis.qbRankings.rows.length > 0 ? (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs" style={{ borderCollapse: "collapse" }}>
+                  <thead>
+                    <tr style={{ borderBottom: "1px solid var(--card-border)" }}>
+                      <th className="px-2 py-1.5" style={{ color: "var(--text-muted)" }}>
+                        #
+                      </th>
+                      <th className="px-2 py-1.5" style={{ color: "var(--text-muted)" }}>
+                        QB
+                      </th>
+                      <th className="px-2 py-1.5 text-right" style={{ color: "var(--text-muted)" }}>
+                        Rating
+                      </th>
+                      <th className="px-2 py-1.5 text-right" style={{ color: "var(--text-muted)" }}>
+                        Yds/G
+                      </th>
+                      <th className="px-2 py-1.5 text-right" style={{ color: "var(--text-muted)" }}>
+                        Comp%
+                      </th>
+                      <th className="px-2 py-1.5 text-right" style={{ color: "var(--text-muted)" }}>
+                        TD/G
+                      </th>
+                      <th className="px-2 py-1.5 text-right" style={{ color: "var(--text-muted)" }}>
+                        INT/G
+                      </th>
+                      <th className="px-2 py-1.5 text-right" style={{ color: "var(--text-muted)" }}>
+                        Games
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {analysis.qbRankings.rows.map((r, i) => (
+                      <tr key={`${r.team}|${r.player}`} style={{ borderBottom: "1px solid var(--card-border)" }}>
+                        <td className="px-2 py-1.5 tabular-nums" style={{ color: "var(--text-muted)" }}>
+                          {i + 1}
+                        </td>
+                        <td className="px-2 py-1.5">
+                          <Link href={`/team?${new URLSearchParams({ sport, name: r.team }).toString()}`} style={{ color: "var(--series-1)" }}>
+                            {r.player}
+                          </Link>{" "}
+                          <span style={{ color: "var(--text-muted)" }}>({r.team})</span>
+                        </td>
+                        <td
+                          className="px-2 py-1.5 text-right tabular-nums"
+                          style={{ color: r.rating >= 0 ? "var(--status-good)" : "var(--status-critical)" }}
+                        >
+                          {fmtSigned(r.rating, 1)}
+                        </td>
+                        <td className="px-2 py-1.5 text-right tabular-nums" style={{ color: "var(--text-secondary)" }}>
+                          {r.passYardsPerGame.toFixed(0)}
+                        </td>
+                        <td className="px-2 py-1.5 text-right tabular-nums" style={{ color: "var(--text-secondary)" }}>
+                          {r.completionPct.toFixed(1)}
+                        </td>
+                        <td className="px-2 py-1.5 text-right tabular-nums" style={{ color: "var(--text-secondary)" }}>
+                          {r.tdPerGame.toFixed(1)}
+                        </td>
+                        <td className="px-2 py-1.5 text-right tabular-nums" style={{ color: "var(--text-secondary)" }}>
+                          {r.intPerGame.toFixed(2)}
+                        </td>
+                        <td className="px-2 py-1.5 text-right tabular-nums" style={{ color: "var(--text-secondary)" }}>
+                          {r.gamesLed}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+                Not enough games played this season yet for any QB to qualify — check back as the
+                season progresses.
+              </p>
+            )}
+          </div>
         </>
       )}
     </div>

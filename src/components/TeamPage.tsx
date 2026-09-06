@@ -209,6 +209,7 @@ export function TeamPage() {
 
     const ranked = computeRankings(sport, games, teamGameStats, eloOptions);
     const rankIndex = ranked?.rows.findIndex((r) => r.team === team) ?? -1;
+    const rankedRow = rankIndex >= 0 ? ranked!.rows[rankIndex] : null;
 
     return {
       currentElo: finalRatings.get(team) ?? eloOptions.initialRating,
@@ -219,6 +220,8 @@ export function TeamPage() {
       keyPlayers,
       rank: rankIndex >= 0 ? rankIndex + 1 : null,
       rankOf: ranked?.rows.length ?? null,
+      offenseRating: rankedRow?.offenseRating ?? null,
+      defenseRating: rankedRow?.defenseRating ?? null,
     };
   }, [snapshot, sport, team, currentBankroll, fractionalMultiplier]);
 
@@ -340,7 +343,30 @@ export function TeamPage() {
               sub={analysis.rank ? `of ${analysis.rankOf} this season` : "no games yet this season"}
             />
             <StatTile label="Last 5" value={analysis.recent.slice(-5).map((g) => g.result).join("-") || "—"} sub="most recent first" />
+            {analysis.offenseRating !== null && (
+              <StatTile
+                label="Offense rtg"
+                value={`${analysis.offenseRating >= 0 ? "+" : ""}${analysis.offenseRating.toFixed(1)}`}
+                sub="pts/g vs. expected"
+                accent={analysis.offenseRating >= 0 ? "good" : "critical"}
+              />
+            )}
+            {analysis.defenseRating !== null && (
+              <StatTile
+                label="Defense rtg"
+                value={`${analysis.defenseRating >= 0 ? "+" : ""}${analysis.defenseRating.toFixed(1)}`}
+                sub="pts/g vs. expected"
+                accent={analysis.defenseRating >= 0 ? "good" : "critical"}
+              />
+            )}
           </div>
+          {(analysis.offenseRating !== null || analysis.defenseRating !== null) && (
+            <p className="-mt-3 text-xs" style={{ color: "var(--text-muted)" }}>
+              Offense/Defense rtg: points scored/allowed per game compared to what an average team
+              would do against the same strength of opponent this season — see Rankings for the
+              full board.
+            </p>
+          )}
           {analysis.rank && (
             <p className="-mt-3 text-xs" style={{ color: "var(--text-muted)" }}>
               <Link href={`/rankings/${sport}`} className="underline" style={{ color: "var(--series-1)" }}>
