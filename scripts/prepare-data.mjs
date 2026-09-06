@@ -124,6 +124,73 @@ async function prepareNfl() {
   return { schema: SCHEMA, games, marketOdds: { schema: MARKET_ODDS_SCHEMA, rows: marketOddsRows } };
 }
 
+/**
+ * NFL player usage, from nflverse's own "stats_player" release — unlike
+ * CFB, no per-game scraping and no separate offense/defense files needed:
+ * one row per player per game, already carrying its own game_id (matching
+ * nfl-games.json's own id scheme exactly) plus every offense AND defense
+ * stat in one place. This release is the actively-updated one (per-season
+ * files, refreshed weekly in-season) — a similarly-named but DIFFERENT
+ * release, "player_stats" (singular, no per-season files), was checked
+ * first and found abandoned after the 2024 season; don't reuse that URL.
+ * Reduced to the same top-3-by-usage, same-field-order shape as CFB's (see
+ * PLAYER_USAGE_SCHEMA) so the client-side code doesn't need to know which
+ * sport it's looking at.
+ */
+async function prepareNflPlayerUsage(seasons) {
+  console.log("Fetching NFL player stats...");
+  const buckets = new Map(); // `${gameId}|${team}|${category}` -> [{ player, value, statLine }]
+  const addCandidate = (gameId, team, category, player, value, statLine) => {
+    if (!gameId || !team || !player || !Number.isFinite(value) || value <= 0) return;
+    const key = `${gameId}|${team}|${category}`;
+    const list = buckets.get(key);
+    if (list) list.push({ player, value, statLine });
+    else buckets.set(key, [{ player, value, statLine }]);
+  };
+
+  for (const season of seasons) {
+    let rows;
+    try {
+      rows = await fetchCsv(`https://github.com/nflverse/nflverse-data/releases/download/stats_player/stats_player_week_${season}.csv`);
+    } catch {
+      console.log(`  skipping ${season} (not published yet)`);
+      continue;
+    }
+    for (const r of rows) {
+      if (!r.game_id || !r.team) continue;
+      const name = r.player_display_name || r.player_name;
+      addCandidate(r.game_id, r.team, "passing", name, Number(r.attempts) || 0, [
+        Number(r.completions) || 0,
+        Number(r.attempts) || 0,
+        Number(r.passing_yards) || 0,
+        Number(r.passing_tds) || 0,
+        Number(r.passing_interceptions) || 0,
+      ]);
+      addCandidate(r.game_id, r.team, "rushing", name, Number(r.carries) || 0, [
+        Number(r.carries) || 0,
+        Number(r.rushing_yards) || 0,
+        Number(r.rushing_tds) || 0,
+      ]);
+      addCandidate(r.game_id, r.team, "receiving", name, Number(r.receptions) || 0, [
+        Number(r.receptions) || 0,
+        Number(r.receiving_yards) || 0,
+        Number(r.receiving_tds) || 0,
+      ]);
+      const tackles = (Number(r.def_tackles_solo) || 0) + (Number(r.def_tackles_with_assist) || 0);
+      addCandidate(r.game_id, r.team, "defensive", name, tackles, [tackles, Number(r.def_sacks) || 0, Number(r.def_tackles_for_loss) || 0]);
+    }
+  }
+
+  const outRows = [];
+  for (const [key, candidates] of buckets) {
+    const [gameId, team, category] = key.split("|");
+    candidates.sort((a, b) => b.value - a.value);
+    candidates.slice(0, USAGE_TOP_N).forEach((c, i) => outRows.push([gameId, team, category, c.player, i + 1, c.statLine]));
+  }
+  console.log(`  ${outRows.length} player-usage rows`);
+  return { schema: PLAYER_USAGE_SCHEMA, rows: outRows };
+}
+
 // cfbfastR-data's old single-file archive (schedules/cfb_games_info.csv) was
 // abandoned after the 2020 season — using it silently trained the model on
 // five-year-stale rosters and conference alignments. schedules/csv/ is the
@@ -292,19 +359,26 @@ async function mapWithConcurrency(items, limit, fn) {
 }
 
 /**
- * Compact schema: [gameId, team, category, player, statLine] — just the
- * USAGE LEADER in each category, per team per game (not a full box score),
- * with their full stat line for that game so the app can show real numbers,
- * not just a name. `statLine` meaning is category-specific, see
- * PLAYER_USAGE_CATEGORIES' `fields` below.
+ * Compact schema: [gameId, team, category, player, rank, statLine] — the
+ * TOP 3 by usage in each category, per team per game (not a full box score:
+ * shipping literally every credited player, especially on defense, would
+ * balloon this file for a lot of noise from garbage-time/one-tackle names).
+ * `rank` is 1/2/3 (1 = the game's usage leader). `statLine` meaning is
+ * category-specific, see PLAYER_USAGE_CATEGORIES' `fields` below — same
+ * field order for both sports, so the client-side formatting code doesn't
+ * need to know which sport it's looking at.
  *
- * "defense" specifically only works because ESPN's box score carries real
- * total-tackle counts per player — cfbfastR's own player_stats archive has
- * no tackle stat at all and was checked and rejected for this: most games
- * showed 0-1 total defenders credited with anything (sacks/INTs/PBUs are
- * too sparse to represent a defense), so it's ESPN's box score or nothing.
+ * "defense" specifically only works for CFB because ESPN's box score
+ * carries real total-tackle counts per player — cfbfastR's own player_stats
+ * archive has no tackle stat at all and was checked and rejected for this:
+ * most games showed 0-1 total defenders credited with anything (sacks/INTs/
+ * pass-breakups are too sparse to represent a defense), so it's ESPN's box
+ * score or nothing for CFB. NFL uses nflverse's own player_stats_def.csv
+ * instead (see prepareNflPlayerUsage), which has real tackle counts for
+ * every defender across every season back to 1999 — no scraping needed.
  */
-const PLAYER_USAGE_SCHEMA = ["gameId", "team", "category", "player", "statLine"];
+const PLAYER_USAGE_SCHEMA = ["gameId", "team", "category", "player", "rank", "statLine"];
+const USAGE_TOP_N = 3;
 
 function parsePlainNumber(raw) {
   const v = Number(raw);
@@ -377,18 +451,21 @@ const PLAYER_USAGE_CATEGORIES = [
   },
 ];
 
-/** The usage leader (highest-ranked) in one team's one statistical category this game, with their full stat line — or null if nobody qualifies. */
-function categoryLeader(categoryBlock, categoryDef) {
-  let best = null;
+/** The top USAGE_TOP_N players (by usage) in one team's one statistical category this game, each with their full stat line, ranked 1..N. */
+function categoryTopN(categoryBlock, categoryDef) {
+  const candidates = [];
   for (const a of categoryBlock?.athletes ?? []) {
     const value = categoryDef.rankParse(a.stats?.[categoryDef.rankStatIndex]);
     const name = a.athlete?.displayName;
     if (value === null || !name) continue;
-    if (!best || value > best.value) best = { player: name, value, stats: a.stats };
+    candidates.push({ player: name, value, stats: a.stats });
   }
-  if (!best) return null;
-  const statLine = categoryDef.fields.map((f) => f.parse(best.stats ?? []) ?? 0);
-  return { player: best.player, statLine };
+  candidates.sort((a, b) => b.value - a.value);
+  return candidates.slice(0, USAGE_TOP_N).map((c, i) => ({
+    player: c.player,
+    rank: i + 1,
+    statLine: categoryDef.fields.map((f) => f.parse(c.stats ?? []) ?? 0),
+  }));
 }
 
 /**
@@ -439,8 +516,9 @@ async function fetchCfbGameBoxScore(gameId, homeTeam, awayTeam) {
       if (!team) continue;
       for (const categoryDef of PLAYER_USAGE_CATEGORIES) {
         const categoryBlock = block.statistics?.find((s) => s.name === categoryDef.category);
-        const leader = categoryLeader(categoryBlock, categoryDef);
-        if (leader) playerRows.push([gameId, team, categoryDef.category, leader.player, leader.statLine]);
+        for (const entry of categoryTopN(categoryBlock, categoryDef)) {
+          playerRows.push([gameId, team, categoryDef.category, entry.player, entry.rank, entry.statLine]);
+        }
       }
     }
   }
@@ -515,6 +593,10 @@ async function main() {
   const nflTeamStats = await prepareNflTeamStats(nflSeasons);
   await writeFile(path.join(OUT_DIR, "nfl-team-stats.json"), JSON.stringify(nflTeamStats));
   console.log(`Wrote public/data/nfl-team-stats.json`);
+
+  const nflPlayerUsage = await prepareNflPlayerUsage(nflSeasons);
+  await writeFile(path.join(OUT_DIR, "nfl-player-usage.json"), JSON.stringify(nflPlayerUsage));
+  console.log(`Wrote public/data/nfl-player-usage.json`);
 
   const { schema, games, fbsGames } = await prepareCfb();
   await writeFile(path.join(OUT_DIR, "cfb-games.json"), JSON.stringify({ schema, games }));

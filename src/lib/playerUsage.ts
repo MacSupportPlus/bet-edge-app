@@ -34,12 +34,14 @@ export interface PlayerUsageRow {
   team: string;
   category: UsageCategory;
   player: string;
+  /** 1 = that game's usage leader in this category; 2/3 = runners-up (see USAGE_TOP_N in prepare-data.mjs). */
+  rank: number;
   statLine: number[];
 }
 
 interface RawPlayerUsageDataset {
   schema: string[];
-  rows: [string, string, UsageCategory, string, number[]][];
+  rows: [string, string, UsageCategory, string, number, number[]][];
 }
 
 /** Fetches public/data/{sport}-player-usage.json — empty array (not an error) if the sport doesn't have this archive. */
@@ -47,7 +49,7 @@ export async function loadPlayerUsage(sport: Sport): Promise<PlayerUsageRow[]> {
   const res = await fetch(`/data/${sport}-player-usage.json`);
   if (!res.ok) return [];
   const raw: RawPlayerUsageDataset = await res.json();
-  return raw.rows.map(([gameId, team, category, player, statLine]) => ({ gameId, team, category, player, statLine }));
+  return raw.rows.map(([gameId, team, category, player, rank, statLine]) => ({ gameId, team, category, player, rank, statLine }));
 }
 
 export interface StarterInfo {
@@ -84,7 +86,9 @@ export function primaryStarter(
     .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0))
     .map((g) => g.gameId!);
 
-  const rowsThisSeason = usage.filter((r) => r.team === team && r.category === category && teamGameIds.has(r.gameId));
+  // Only rank 1 counts as "the game's leader" for continuity purposes — rank
+  // 2/3 rows exist for depth-chart/ranking use, not to be treated as ties.
+  const rowsThisSeason = usage.filter((r) => r.team === team && r.category === category && r.rank === 1 && teamGameIds.has(r.gameId));
   if (rowsThisSeason.length === 0) return null;
 
   const leaderByGame = new Map(rowsThisSeason.map((r) => [r.gameId, r.player]));

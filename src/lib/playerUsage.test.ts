@@ -17,9 +17,9 @@ describe("primaryStarter", () => {
 
   it("finds the most-frequent usage leader across the team's games this season", () => {
     const usage: PlayerUsageRow[] = [
-      { gameId: "g1", team: "Ohio State", category: "passing", player: "Julian Sayin", statLine: [13, 20, 150, 1, 0] },
-      { gameId: "g2", team: "Ohio State", category: "passing", player: "Julian Sayin", statLine: [18, 25, 200, 2, 1] },
-      { gameId: "g3", team: "Ohio State", category: "passing", player: "Backup Guy", statLine: [10, 15, 90, 0, 1] },
+      { gameId: "g1", team: "Ohio State", category: "passing", player: "Julian Sayin", rank: 1, statLine: [13, 20, 150, 1, 0] },
+      { gameId: "g2", team: "Ohio State", category: "passing", player: "Julian Sayin", rank: 1, statLine: [18, 25, 200, 2, 1] },
+      { gameId: "g3", team: "Ohio State", category: "passing", player: "Backup Guy", rank: 1, statLine: [10, 15, 90, 0, 1] },
     ];
     const result = primaryStarter(usage, games, "Ohio State", "passing", 2024);
     expect(result).toEqual({
@@ -33,8 +33,8 @@ describe("primaryStarter", () => {
 
   it("marks ledMostRecentGame true when the primary starter led the latest tracked game", () => {
     const usage: PlayerUsageRow[] = [
-      { gameId: "g1", team: "Ohio State", category: "passing", player: "Julian Sayin", statLine: [13, 20, 150, 1, 0] },
-      { gameId: "g2", team: "Ohio State", category: "passing", player: "Julian Sayin", statLine: [18, 25, 200, 2, 1] },
+      { gameId: "g1", team: "Ohio State", category: "passing", player: "Julian Sayin", rank: 1, statLine: [13, 20, 150, 1, 0] },
+      { gameId: "g2", team: "Ohio State", category: "passing", player: "Julian Sayin", rank: 1, statLine: [18, 25, 200, 2, 1] },
     ];
     const result = primaryStarter(usage, games, "Ohio State", "passing", 2024);
     expect(result?.ledMostRecentGame).toBe(true);
@@ -42,9 +42,9 @@ describe("primaryStarter", () => {
 
   it("ignores usage rows from other seasons and other teams", () => {
     const usage: PlayerUsageRow[] = [
-      { gameId: "g4", team: "Ohio State", category: "passing", player: "2023 Guy", statLine: [20, 30, 300, 3, 0] }, // wrong season
-      { gameId: "g1", team: "Akron", category: "passing", player: "Akron QB", statLine: [20, 30, 300, 3, 0] }, // wrong team
-      { gameId: "g1", team: "Ohio State", category: "passing", player: "Julian Sayin", statLine: [13, 20, 150, 1, 0] },
+      { gameId: "g4", team: "Ohio State", category: "passing", player: "2023 Guy", rank: 1, statLine: [20, 30, 300, 3, 0] }, // wrong season
+      { gameId: "g1", team: "Akron", category: "passing", player: "Akron QB", rank: 1, statLine: [20, 30, 300, 3, 0] }, // wrong team
+      { gameId: "g1", team: "Ohio State", category: "passing", player: "Julian Sayin", rank: 1, statLine: [13, 20, 150, 1, 0] },
     ];
     const result = primaryStarter(usage, games, "Ohio State", "passing", 2024);
     expect(result).toEqual({
@@ -54,6 +54,16 @@ describe("primaryStarter", () => {
       ledMostRecentGame: true,
       statLine: [13, 20, 150, 1, 0],
     });
+  });
+
+  it("ignores rank 2/3 (runner-up) rows — only the game's usage leader counts", () => {
+    const usage: PlayerUsageRow[] = [
+      { gameId: "g1", team: "Ohio State", category: "rushing", player: "Backup RB", rank: 2, statLine: [8, 40, 0] },
+      { gameId: "g1", team: "Ohio State", category: "rushing", player: "Starter RB", rank: 1, statLine: [15, 90, 1] },
+    ];
+    const result = primaryStarter(usage, games, "Ohio State", "rushing", 2024);
+    expect(result?.player).toBe("Starter RB");
+    expect(result?.gamesLed).toBe(1);
   });
 
   it("returns null when there's no usage data for this team/category/season", () => {

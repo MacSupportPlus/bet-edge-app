@@ -22,6 +22,18 @@ export interface TeamRankingRow {
   yardsPerGame: number | null;
   turnoverMargin: number | null;
   epaPerGame: number | null;
+  /**
+   * Opponent-adjusted points scored/allowed per game, relative to what an
+   * average team would do against the SAME strength of opponent (bucketed
+   * into thirds by opponent Elo, league-wide, this season) — not just a raw
+   * per-game average. Positive offense = outscoring expectation for that
+   * opponent tier; positive defense = allowing less than expectation.
+   */
+  offenseRating: number;
+  defenseRating: number;
+  /** Same idea, in yards instead of points — null without a team-stats archive. */
+  offenseYardsRating: number | null;
+  defenseYardsRating: number | null;
 }
 
 export interface RankingsResult {
@@ -31,6 +43,19 @@ export interface RankingsResult {
   /** Whether any row has a real (nonzero) EPA figure — CFB's archive never does. */
   showEpa: boolean;
   currentSeason: number;
+}
+
+/** [0-33rd percentile), [33rd-66th), [66th-100th] cutoffs for opponent Elo, from a league-wide sample this season. */
+function tercileThresholds(values: number[]): [number, number] {
+  const sorted = [...values].sort((a, b) => a - b);
+  const n = sorted.length;
+  return [sorted[Math.floor(n / 3)], sorted[Math.floor((2 * n) / 3)]];
+}
+
+function bucketOf(value: number, thresholds: [number, number]): number {
+  if (value < thresholds[0]) return 0;
+  if (value < thresholds[1]) return 1;
+  return 2;
 }
 
 /**
@@ -65,8 +90,8 @@ export function computeRankings(
   // Season stat totals, single pass over this season's games (not per-team —
   // O(games), not O(teams x games)).
   const statTotals = new Map<string, { yards: number; turnover: number; epa: number; count: number }>();
-  if (teamGameStats) {
-    const byGameTeam = new Map(teamGameStats.map((s) => [`${s.gameId}|${s.team}`, s]));
+  const byGameTeam = teamGameStats ? new Map(teamGameStats.map((s) => [`${s.gameId}|${s.team}`, s])) : null;
+  if (byGameTeam) {
     for (const g of games) {
       if (g.season !== currentSeason || !g.gameId) continue;
       for (const team of [g.homeTeam, g.awayTeam]) {
@@ -83,6 +108,77 @@ export function computeRankings(
     }
   }
   const showEpa = [...statTotals.values()].some((t) => t.epa !== 0);
+
+  // Opponent-adjusted offense/defense: bucket every team-game this season
+  // into thirds by the OPPONENT's pregame Elo (league-wide), find the
+  // league-average output within each bucket, then compare each team's own
+  // games to the bucket their opponent fell in — not just a flat per-game
+  // average, so racking up points/yards against weak opponents doesn't look
+  // the same as doing it against strong ones.
+  const pointsEntries: { team: string; pointsFor: number; oppElo: number }[] = [];
+  const yardsEntries: { team: string; yards: number; oppElo: number }[] = [];
+  for (const [team, history] of ratingHistory) {
+    for (const g of history) {
+      if (g.season !== currentSeason) continue;
+      pointsEntries.push({ team, pointsFor: g.pointsFor, oppElo: g.opponentRatingBefore });
+      const s = byGameTeam?.get(`${g.gameId ?? ""}|${team}`);
+      if (s) yardsEntries.push({ team, yards: s.totalYards, oppElo: g.opponentRatingBefore });
+    }
+  }
+
+  const pointsThresholds = pointsEntries.length >= 6 ? tercileThresholds(pointsEntries.map((e) => e.oppElo)) : null;
+  const yardsThresholds = yardsEntries.length >= 6 ? tercileThresholds(yardsEntries.map((e) => e.oppElo)) : null;
+
+  const leagueAvg = (entries: { value: number; oppElo: number }[], thresholds: [number, number]) => {
+    const sums = [0, 0, 0];
+    const counts = [0, 0, 0];
+    for (const e of entries) {
+      const b = bucketOf(e.oppElo, thresholds);
+      sums[b] += e.value;
+      counts[b]++;
+    }
+    return sums.map((s, i) => (counts[i] > 0 ? s / counts[i] : s));
+  };
+  const pointsLeagueAvg = pointsThresholds ? leagueAvg(pointsEntries.map((e) => ({ value: e.pointsFor, oppElo: e.oppElo })), pointsThresholds) : null;
+  const yardsLeagueAvg = yardsThresholds ? leagueAvg(yardsEntries.map((e) => ({ value: e.yards, oppElo: e.oppElo })), yardsThresholds) : null;
+
+  const ratingsByTeam = new Map<string, { offPts: number[]; defPts: number[]; offYds: number[]; defYds: number[] }>();
+  const ratingsFor = (team: string) => {
+    let r = ratingsByTeam.get(team);
+    if (!r) {
+      r = { offPts: [], defPts: [], offYds: [], defYds: [] };
+      ratingsByTeam.set(team, r);
+    }
+    return r;
+  };
+  if (pointsThresholds && pointsLeagueAvg) {
+    for (const [team, history] of ratingHistory) {
+      for (const g of history) {
+        if (g.season !== currentSeason) continue;
+        const bucket = bucketOf(g.opponentRatingBefore, pointsThresholds);
+        const expected = pointsLeagueAvg[bucket];
+        const r = ratingsFor(team);
+        r.offPts.push(g.pointsFor - expected);
+        r.defPts.push(expected - g.pointsAgainst);
+      }
+    }
+  }
+  if (yardsThresholds && yardsLeagueAvg && byGameTeam) {
+    for (const [team, history] of ratingHistory) {
+      for (const g of history) {
+        if (g.season !== currentSeason) continue;
+        const ownStat = byGameTeam.get(`${g.gameId ?? ""}|${team}`);
+        const oppStat = byGameTeam.get(`${g.gameId ?? ""}|${g.opponent}`);
+        if (!ownStat || !oppStat) continue;
+        const bucket = bucketOf(g.opponentRatingBefore, yardsThresholds);
+        const expected = yardsLeagueAvg[bucket];
+        const r = ratingsFor(team);
+        r.offYds.push(ownStat.totalYards - expected);
+        r.defYds.push(expected - oppStat.totalYards);
+      }
+    }
+  }
+  const avg = (xs: number[]) => (xs.length > 0 ? xs.reduce((s, x) => s + x, 0) / xs.length : 0);
 
   const rows: TeamRankingRow[] = [];
   for (const [team, history] of ratingHistory) {
@@ -110,6 +206,10 @@ export function computeRankings(
       yardsPerGame: stats ? stats.yards / stats.count : null,
       turnoverMargin: stats ? stats.turnover / stats.count : null,
       epaPerGame: stats && showEpa ? stats.epa / stats.count : null,
+      offenseRating: avg(ratingsByTeam.get(team)?.offPts ?? []),
+      defenseRating: avg(ratingsByTeam.get(team)?.defPts ?? []),
+      offenseYardsRating: byGameTeam ? avg(ratingsByTeam.get(team)?.offYds ?? []) : null,
+      defenseYardsRating: byGameTeam ? avg(ratingsByTeam.get(team)?.defYds ?? []) : null,
     });
   }
 

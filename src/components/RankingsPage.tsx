@@ -8,7 +8,7 @@ import { computeRankings, TeamRankingRow } from "@/lib/rankings";
 import { SPORT_ELO_OPTIONS, SPORT_LABELS } from "@/lib/sportConfig";
 import { loadTeamStats, TeamGameStat } from "@/lib/teamStats";
 
-type SortKey = "elo" | "change" | "record" | "ppg" | "yards" | "turnover" | "epa";
+type SortKey = "elo" | "change" | "record" | "ppg" | "offRating" | "defRating" | "yards" | "turnover" | "epa";
 
 const OTHER_SPORT: Record<Sport, Sport> = { cfb: "nfl", nfl: "cfb" };
 
@@ -80,6 +80,10 @@ export function RankingsPage({ sport }: { sport: Sport }) {
           return r.wins + r.losses + r.ties > 0 ? r.wins / (r.wins + r.losses + r.ties) : -Infinity;
         case "ppg":
           return r.ppg ?? -Infinity;
+        case "offRating":
+          return r.offenseRating;
+        case "defRating":
+          return r.defenseRating;
         case "yards":
           return r.yardsPerGame ?? -Infinity;
         case "turnover":
@@ -97,6 +101,8 @@ export function RankingsPage({ sport }: { sport: Sport }) {
     { key: "change", label: "Δ Season", show: true },
     { key: "record", label: "Record", show: true },
     { key: "ppg", label: "PPG", show: true },
+    { key: "offRating", label: "Off rtg", show: true },
+    { key: "defRating", label: "Def rtg", show: true },
     { key: "yards", label: "Yds/G", show: !!analysis?.hasTeamStats },
     { key: "turnover", label: "Turnover", show: !!analysis?.hasTeamStats },
     { key: "epa", label: "EPA/G", show: !!analysis?.showEpa },
@@ -236,6 +242,18 @@ export function RankingsPage({ sport }: { sport: Sport }) {
                     <td className="px-3 py-1.5 text-right tabular-nums" style={{ color: "var(--text-secondary)" }}>
                       {r.ppg?.toFixed(1) ?? "—"}
                     </td>
+                    <td
+                      className="px-3 py-1.5 text-right tabular-nums"
+                      style={{ color: r.offenseRating >= 0 ? "var(--status-good)" : "var(--status-critical)" }}
+                    >
+                      {fmtSigned(r.offenseRating, 1)}
+                    </td>
+                    <td
+                      className="px-3 py-1.5 text-right tabular-nums"
+                      style={{ color: r.defenseRating >= 0 ? "var(--status-good)" : "var(--status-critical)" }}
+                    >
+                      {fmtSigned(r.defenseRating, 1)}
+                    </td>
                     {analysis.hasTeamStats && (
                       <td className="px-3 py-1.5 text-right tabular-nums" style={{ color: "var(--text-secondary)" }}>
                         {r.yardsPerGame?.toFixed(0) ?? "—"}
@@ -261,7 +279,11 @@ export function RankingsPage({ sport }: { sport: Sport }) {
             {sport === "cfb"
               ? "Limited to FBS teams (identified by having box-score stats on file — see the Guide) with at least one game played this season. Δ Season is each team's current Elo minus its rating the moment it entered this season (after any preseason regression toward the mean)."
               : "Every team with at least one game played this season. Δ Season is each team's current Elo minus its rating the moment it entered this season."}{" "}
-            Click any column to sort by it.
+            <strong style={{ color: "var(--text-secondary)" }}>Off/Def rtg</strong> are opponent-adjusted points
+            scored/allowed per game — each team&apos;s output compared to what an average team would do against
+            the same strength of opponent (bucketed into thirds by opponent Elo, league-wide), not just a raw
+            per-game average, so padding stats against weak teams doesn&apos;t look the same as doing it against
+            strong ones. Click any column to sort by it.
           </p>
         </>
       )}
