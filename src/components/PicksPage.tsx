@@ -60,6 +60,7 @@ interface PickRow {
 
 export function PicksPage({ sport }: { sport: Sport }) {
   const [requestId, setRequestId] = useState(0);
+  const [tab, setTab] = useState<"upcoming" | "history">("upcoming");
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
 
   useEffect(() => {
@@ -303,9 +304,33 @@ export function PicksPage({ sport }: { sport: Sport }) {
         market lines respectively (see the Guide) — not a substitute for an actual line.
       </p>
 
+      <div className="flex gap-1">
+        {(
+          [
+            { key: "upcoming" as const, label: "Upcoming" },
+            { key: "history" as const, label: "History" },
+          ]
+        ).map((t) => (
+          <button
+            key={t.key}
+            onClick={() => setTab(t.key)}
+            className="rounded-full border px-3 py-1 text-xs transition-colors"
+            style={{
+              borderColor: tab === t.key ? "var(--series-1)" : "var(--card-border)",
+              background: tab === t.key ? "var(--series-1)" : "transparent",
+              color: tab === t.key ? "white" : "var(--text-secondary)",
+            }}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
       {analysis && (
         <div className="flex flex-col gap-2">
-          {analysis.rows.map((row, i) => {
+          {analysis.rows
+            .filter((row) => (tab === "history" ? row.status === "graded" : row.status === "upcoming"))
+            .map((row, i) => {
             const favoredHome = row.pHome >= 0.5;
             const favoredTeam = favoredHome ? row.homeTeam : row.awayTeam;
             const favoredP = favoredHome ? row.pHome : 1 - row.pHome;
@@ -353,9 +378,11 @@ export function PicksPage({ sport }: { sport: Sport }) {
               </div>
             );
           })}
-          {analysis.rows.length === 0 && (
+          {analysis.rows.filter((row) => (tab === "history" ? row.status === "graded" : row.status === "upcoming")).length === 0 && (
             <p className="text-sm" style={{ color: "var(--text-muted)" }}>
-              Nothing in the last {RECENT_DAYS} days or the upcoming window right now.
+              {tab === "history"
+                ? `Nothing graded in the last ${RECENT_DAYS} days yet.`
+                : "Nothing scheduled in the upcoming window right now."}
             </p>
           )}
         </div>
