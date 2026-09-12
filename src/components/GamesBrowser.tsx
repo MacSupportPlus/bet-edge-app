@@ -173,28 +173,24 @@ export function GamesBrowser({ sport }: { sport: Sport }) {
                 <Link
                   key={i}
                   href={researchUrl(sport, r.homeTeam, r.awayTeam, r.espnId)}
-                  className="flex items-center gap-3 px-4 py-3 text-sm transition-colors hover:bg-[var(--gridline)]"
+                  className="flex flex-col gap-1 px-4 py-3 text-sm transition-colors hover:bg-[var(--gridline)]"
                 >
-                  <span className="w-28 shrink-0 tabular-nums" style={{ color: "var(--text-muted)" }}>
-                    {r.status === "final" ? r.date : fmtUpcoming(r.date)}
-                  </span>
-                  <span className="min-w-0 flex-1 truncate" style={{ color: "var(--text-primary)" }}>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="tabular-nums text-xs" style={{ color: "var(--text-muted)" }}>
+                      {r.status === "final" ? r.date : fmtUpcoming(r.date)}
+                    </span>
+                    {r.status === "final" ? (
+                      <span className="tabular-nums text-xs" style={{ color: "var(--text-secondary)" }}>
+                        {r.awayScore}-{r.homeScore}
+                      </span>
+                    ) : (
+                      <span className="rounded-full px-2 py-0.5 text-xs" style={{ background: "var(--gridline)", color: "var(--text-secondary)" }}>
+                        upcoming
+                      </span>
+                    )}
+                  </div>
+                  <span className="font-medium" style={{ color: "var(--text-primary)" }}>
                     {r.awayTeam} @ {r.homeTeam}
-                  </span>
-                  {r.status === "final" ? (
-                    <span className="shrink-0 tabular-nums" style={{ color: "var(--text-secondary)" }}>
-                      {r.awayScore}-{r.homeScore}
-                    </span>
-                  ) : (
-                    <span
-                      className="shrink-0 rounded-full px-2 py-0.5 text-xs"
-                      style={{ background: "var(--gridline)", color: "var(--text-secondary)" }}
-                    >
-                      upcoming
-                    </span>
-                  )}
-                  <span className="shrink-0 text-xs underline" style={{ color: "var(--series-1)" }}>
-                    Research →
                   </span>
                 </Link>
               ))}
