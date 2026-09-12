@@ -1,21 +1,26 @@
-# Edge Calculator
+# Bet App
 
-A bankroll/edge-sizing strategy app grounded in five formulas from quantitative
-betting theory: **expectancy**, **volatility**, **risk of ruin**, the **Kelly
-criterion**, and **geometric (compounded) growth** vs. naive ensemble-average
-growth.
+A personal, fully static NFL/college football research and bankroll tool,
+grounded in five formulas from quantitative betting theory — **expectancy**,
+**volatility**, **risk of ruin**, the **Kelly criterion**, and **geometric
+(compounded) growth** vs. naive ensemble-average growth — and built on a real,
+walk-forward-validated Elo/logistic-regression win-probability model, not a
+re-derivation of the market's own line.
 
 ## Core idea
 
-This app does **not** predict outcomes. It doesn't guess who wins.
+This app does **not** predict outcomes with certainty. What it does:
 
-You (or your own model) supply a win-probability estimate `p` and payout odds
-`b` for a bet with positive expected value. The app tells you:
-
-- whether that edge is mathematically real,
-- how volatile it is,
-- how much of your bankroll it's safe to stake, and
-- what actually happens to your bankroll over time if you bet that way.
+- trains a transparent, auditable probability model on real historical games
+  (no vegas lines used as an input),
+- turns a probability (yours or the model's) plus market odds into a real
+  expected-value check and a Kelly-sized stake,
+- gives you the raw data — every team, every player, every game, every
+  situational trend — to research a pick yourself instead of only trusting
+  the model's own number, and
+- tracks what actually happens to a bankroll over time, honestly, including
+  the difference between the ensemble average outcome and what a single real
+  bettor experiences.
 
 The central theme, made visible throughout the UI: the **average** outcome
 across many hypothetical parallel bettors is not what any single bettor
@@ -34,186 +39,189 @@ actually be 50.5%), and Kelly has no concept of that uncertainty, the app
 defaults to **fractional Kelly** (½-Kelly) rather than full Kelly — trading
 some growth rate for protection against a wrong `p`.
 
-## Status
+## Navigation
 
-| Phase | What | Status |
-|---|---|---|
-| 1 | Edge calculator: expectancy, volatility, Kelly fraction, growth-rate curve | ✅ Done |
-| 2 | Monte Carlo risk-of-ruin simulator (ensemble average vs. median/geometric path) | ✅ Done |
-| 3 | Bankroll tracker: log real bets, track realized vs. theoretical growth, drawdown | ✅ Done |
-| 4 | Probability estimation model (calibrated `p`, Brier score, backtesting) | ✅ Done |
-| 5 | Portfolio Kelly for correlated concurrent bets | Stretch |
-| — | **This Week**: automated live-odds edge scanner (college football) | ✅ Done |
-| — | In-app Guide explaining every tab in plain language | ✅ Done |
+Five top-level destinations, two of which are families of tools sharing a
+second row of tabs rather than one page each:
 
-### Phase 1 — Edge calculator
+| Destination | What's there |
+|---|---|
+| **Home** | Command Center — starred teams/players with live context, an "Explore" grid to everything else |
+| **Research** | Matchup, Team, Player, Games, This Week, Rankings, Props — seven sub-tabs, one shared model |
+| **Trends** | Trusted Trends, Team Trends, Today, Build Your Own, My Trends |
+| **Tracker** | Bets & CLV, Risk of Ruin, Edge Calculator |
+| **Guide** | Plain-language walkthrough of every tool above, plus the Probability Model's full calibration backtest |
 
-Inputs: win probability `p`, net payout odds `b` (a win pays `b`× stake),
-bankroll size, and a fractional-Kelly toggle (Full / ½ / ¼).
+Implemented with two Next.js **route groups** — `src/app/(research)/` and
+`src/app/(tracker)/` — so every URL is unchanged from before the grouping
+(`(research)`/`(tracker)` don't appear in the path); each group has its own
+`layout.tsx` rendering a shared sub-nav (`ResearchSubNav.tsx`/`TrackerSubNav.tsx`).
 
-Computes and displays:
-
-- **Expectancy** `E = p·b - q` (expected value per unit staked)
-- **Standard deviation** `σ = sqrt(p·q·(b+1)²)` of a single bet's outcome
-- **Kelly fraction** `f* = (b·p - q) / b`, clamped to 0 when there's no edge
-- **Growth-rate curve** `g(f) = p·ln(1+f·b) + q·ln(1-f)` plotted across stake
-  fractions 0–100% of bankroll, with markers at full-Kelly and half-Kelly
-- **Recommended stake in dollars** = `f* × fractional multiplier × bankroll`
-
-If expectancy is not positive, the calculator refuses to recommend a stake
-and shows a "no edge — do not bet" warning instead.
-
-The formulas live in [`src/lib/edge.ts`](src/lib/edge.ts) as pure, dependency-free
-functions, unit-tested in [`src/lib/edge.test.ts`](src/lib/edge.test.ts) against known
-values (the textbook 55%-edge coin-flip example: `E = 0.10`, `f* = 10%`,
-growth rate ≈ 0.501%/bet at full Kelly).
-
-### Phase 2 — Risk-of-ruin simulator
-
-Simulates `N` independent bettors each making `M` sequential bets under a
-chosen sizing rule — either **proportional** (stake resizes with current
-bankroll, e.g. Kelly-style) or **flat** (stake stays fixed in dollar terms,
-sized as a fraction of the *starting* bankroll). This is a real simulation,
-not the closed-form ruin formula, because the closed-form version assumes a
-fixed bet size in bankroll units — real bettors re-size every bet.
-
-For each rule it reports:
-
-- the **ruin rate** — % of simulated bettors whose bankroll ever dropped to
-  ≤1% of their starting bankroll,
-- the **ensemble average** bankroll path over time, and
-- the **median** (typical single-path) bankroll over time,
-
-plotted together on a log-scale fan chart alongside a sample of individual
-paths. The average and median visibly diverge — on the default 55%-edge,
-½-Kelly scenario, the ensemble average overstates the typical bettor's
-outcome by roughly 1.4–1.5×. A side-by-side comparison (Full Kelly / ½ Kelly
-/ flat betting / 2× Kelly) shows over-betting sharply increasing ruin risk
-(2× Kelly runs ~20% ruin vs. ~0% for ½ Kelly in the same scenario).
-
-The simulation engine lives in [`src/lib/simulate.ts`](src/lib/simulate.ts) (a
-seeded, reproducible PRNG plus pure simulate functions), unit-tested in
-[`src/lib/simulate.test.ts`](src/lib/simulate.test.ts) — including a direct test that
-the ensemble mean exceeds the median (the "average is a lie" effect) and that
-2× Kelly ruins more often than full Kelly.
-
-### Phase 3 — Bankroll tracker
-
-Lets you log real bets (date, description, `p` estimate used, odds, stake)
-and settle them as a win or loss. From that log it computes and displays two
-bankroll paths side by side:
-
-- **realized** — what actually happened, from the stakes you actually placed
-- **theoretical** — what would have happened with the *same picks and
-  outcomes* but every bet sized at recommended fractional-Kelly instead
-
-Comparing the two isolates sizing discipline from pick quality: if realized
-tracks below theoretical, sizing (not picking) is where value is being lost.
-Also shown: current bankroll, total P&L, win rate, current drawdown, and max
-drawdown from peak.
-
-Data is currently saved to **this browser's localStorage only** — it's
-per-device and not synced anywhere. That's a deliberate v1 shortcut (no
-backend/auth needed yet); a real database is the natural next step if you
-want it accessible from more than one device.
-
-The math lives in [`src/lib/bankroll.ts`](src/lib/bankroll.ts), unit-tested in
-[`src/lib/bankroll.test.ts`](src/lib/bankroll.test.ts).
-
-### Phase 4 — Probability model (NFL & college football)
-
-A real, trained probability model — no vegas lines used as an input, so it's
-not just re-deriving the market's own number. The pipeline:
+## The model
 
 1. **Data**: real historical games pulled from two free, no-API-key public
-   sources — [nflverse](https://github.com/nflverse/nfldata) (NFL, 1999–present,
-   ~7,300 games) and [cfbfastR-data](https://github.com/sportsdataverse/cfbfastR-data)
-   (college football, 2004–present, ~15,300 games). [`scripts/prepare-data.mjs`](scripts/prepare-data.mjs)
-   downloads and trims these to `public/data/{nfl,cfb}-games.json`; re-run it
-   (`node scripts/prepare-data.mjs`) any time to refresh with newer games.
+   sources — [nflverse](https://github.com/nflverse/nfldata) (NFL, 1999–present)
+   and [cfbfastR-data](https://github.com/sportsdataverse/cfbfastR-data)
+   (college football, 2004–present), plus per-game player usage (passing/
+   rushing/receiving/tackle leaders) and, for NFL, real historical spread/
+   total lines, rest days, weather, and starting-QB names — all previously
+   fetched and discarded by earlier versions of this pipeline, now kept.
+   [`scripts/prepare-data.mjs`](scripts/prepare-data.mjs) builds
+   `public/data/*.json`; re-run it (`node scripts/prepare-data.mjs`) any time
+   to refresh with newer games. [`scripts/fetch-live-odds.mjs`](scripts/fetch-live-odds.mjs)
+   separately pulls live multi-book odds and player props from
+   [The Odds API](https://the-odds-api.com) on its own schedule.
 2. **Feature engineering**: [`src/lib/elo.ts`](src/lib/elo.ts) replays every
    season chronologically, computing an Elo rating per team from nothing but
-   final scores. Each game's feature is the *pregame* Elo gap — ratings as
-   they stood before that game — so there's no leakage of the outcome it's
-   predicting.
+   final scores — each game's feature is the *pregame* Elo gap, so there's no
+   leakage of the outcome it's predicting. [`src/lib/qbValue.ts`](src/lib/qbValue.ts)
+   adds a walk-forward, shrinkage-regularized starting-QB value signal (NFL
+   only, since only nflverse's archive carries per-game starting-QB names),
+   injury-aware via ESPN's live report. [`src/lib/srs.ts`](src/lib/srs.ts)
+   computes a completely independent Simple Rating System (margin-of-victory
+   based, no home-field term) as a free "second opinion" alongside Elo on the
+   Team and Rankings pages — retrospective only, never fed into the trained
+   model.
 3. **Model**: [`src/lib/logisticRegression.ts`](src/lib/logisticRegression.ts), a
    from-scratch batch-gradient-descent logistic regression (no ML library),
    trained on the earliest 80% of games and evaluated only on the most
-   recent 20% it never saw.
+   recent 20% it never saw. `src/lib/modelFeatures.ts` builds a consistent
+   feature vector (Elo diff, team-stat diffs, QB value) shared by training
+   and every live prediction, so they can never silently drift out of sync.
 4. **Calibration**: [`src/lib/calibration.ts`](src/lib/calibration.ts) computes
    Brier score and a reliability diagram (predicted probability vs. actual
-   win frequency, bucketed) on the held-out set — shown against a naive
-   "always predict the training-set home-win rate" baseline. On the shipped
-   data the model beats that baseline on both sports.
+   win frequency, bucketed) on the held-out set, against a naive "always
+   predict the training-set home-win rate" baseline.
 5. **Backtest**: [`src/lib/backtest.ts`](src/lib/backtest.ts) replays the
    held-out games in order, comparing flat betting vs. full Kelly vs. half
-   Kelly, reusing `edge.ts`'s exact staking math, at an assumed standard
-   -110 (b≈0.909) on both sides — a simplifying assumption, since this
-   dataset carries no real sportsbook lines.
+   Kelly at an assumed standard -110.
+6. **Spread/total**: [`src/lib/spreadModel.ts`](src/lib/spreadModel.ts) fits a
+   linear margin/total point estimate, then turns it into a real cover/over
+   probability two ways — a Normal-distribution fallback, and (once at least
+   50 held-out residuals exist) an **empirical, distribution-free**
+   probability straight from the actual historical residuals (a split-
+   conformal-style approach), which correctly captures real skew a bell
+   curve can't (e.g. rushing yards: only 44.4% of games beat a player's own
+   trailing mean, not 50%). `historicalTotalResiduals()` computes this
+   walk-forward (no-leakage) for totals for the first time — the point
+   estimate existed before, but its accuracy was never validated
+   walk-forward until this pass.
+7. **Player props**: [`src/lib/playerProjection.ts`](src/lib/playerProjection.ts)
+   projects passing/rushing/receiving yards from a player's own walk-forward
+   season-to-date average, validated separately per category against a naive
+   league-average baseline (rushing cuts error ~34%, receiving ~14%, passing
+   ~10%) — real, disclosed, per-category numbers, not one blanket claim.
 
 **A genuinely useful accident worth keeping in mind**: full-Kelly's backtest
-bankroll figure can come out absurdly large (sometimes far beyond anything
-real) over 1,000+ held-out games. That's not a bug — it's raw Kelly math
-compounding a sustained edge for that many consecutive bets, which assumes
-unlimited market depth at an unchanged price for over a decade, something no
-real sportsbook would ever allow. It's also why every bet is hard-capped at
-25% of the current bankroll regardless of Kelly's raw recommendation (even
-half-Kelly is still ~50% on a very confident prediction — fractional sizing
-alone isn't enough protection). The **per-bet growth rate** (the same `g`
-from Phase 1, backed out of the backtest) is the honest number, and it's
-shown right alongside the dollar figure for exactly this reason.
+bankroll figure can come out absurdly large over 1,000+ held-out games. That's
+not a bug — it's raw Kelly math compounding a sustained edge for that many
+consecutive bets, which assumes unlimited market depth at an unchanged price
+for over a decade, something no real sportsbook would ever allow. Every bet
+is hard-capped at 25% of the current bankroll regardless of Kelly's raw
+recommendation. The **per-bet growth rate** (the same `g` above, backed out
+of the backtest) is the honest number, shown right alongside the dollar
+figure for exactly this reason.
 
-### This Week — automated live-odds scanner (college football)
+## Research tools
 
-The natural conclusion of Phase 4: instead of you manually looking up a
-matchup's odds and typing `p`/`b` into the Edge Calculator, this tab does it
-for you. It fetches this week's upcoming FBS games and live moneylines from
-[ESPN's public, unofficial site API](src/lib/espn.ts) (no key, no signup,
-CORS-open), matches each team against the Phase 4 historical dataset (see
-[`src/lib/teamMatch.ts`](src/lib/teamMatch.ts) — exact match, then a small
-verified alias table for renamed/abbreviated schools, then a normalized
-fallback; anything it can't confidently match is skipped, never guessed),
-computes each team's *current* Elo rating, and runs the same probability
-model from Phase 4 to find real positive-EV bets — sized against your actual
-current bankroll from the Tracker.
+- **This Week** — the model above, applied automatically: fetches this
+  week's games and live odds, matches teams against the historical archive
+  (`src/lib/teamMatch.ts` — exact match, alias table, normalized fallback;
+  anything unmatched is skipped, never guessed), and surfaces only
+  positive-EV picks. A big model/market disagreement (`src/lib/scanner.ts`'s
+  `MAX_TRUSTED_DISAGREEMENT`/`MAX_TRUSTED_RATIO` guardrails) gets pulled into
+  a separate "flagged" list instead of recommended or hidden — a big gap
+  from a real sportsbook price is far more likely to mean the model missed
+  something than that free money was found. A "report card" backtests the
+  last 10 days' worth of real, already-decided games.
+- **Team / Player pages** — a single team's or player's own deep-dive:
+  rating trends, opponent-adjusted offense/defense, recent form, and for
+  players a full stat history with a green/yellow/red hit-rate table
+  (`src/lib/hitRate.ts`, Outlier.bet's own color convention), a recent-games
+  bar chart, and every book's current prop line. Star either to pin it to
+  Home (`src/lib/favorites.ts`).
+- **Games** — the full season schedule (not just today's algorithmic picks),
+  most current first, with a separate History view for past seasons, most
+  recent first.
+- **Rankings** — every team by current Elo, sortable by any column,
+  including the independent SRS second opinion above; links to
+  opponent-adjusted QB Rankings.
+- **Props** — player prop edges through the exact de-vig + trust-guardrail
+  pipeline moneyline picks use, reusing `src/lib/scanner.ts`'s `pickOverUnder`.
 
-**Building this surfaced a real problem, not just a feature**: a
-single-feature Elo model can be well-calibrated *on average* while still
-being badly wrong on individual extreme mismatches (a simple model
-confidently favoring a huge underdog over a market-priced 6% shot, on a
-lopsided "buy game"). [`src/lib/scanner.ts`](src/lib/scanner.ts) only ever
-recommends a pick when the model's probability is within both a 15-point gap
-*and* a 2× ratio of the market's own implied probability — both checks have
-to pass. Anything outside that gets pulled into a separate "flagged" list
-instead of being hidden or, worse, recommended: a big disagreement with a
-real sportsbook price is much more likely to mean the model is missing
-something than that free money was found.
+## Trends
 
-Also included: `src/lib/concurrency.ts` (a tested, limited-concurrency
-fetcher so ~90 games don't all hit ESPN at once) and a "Log this bet" link on
-every recommendation that carries the numbers straight into the Bankroll
-Tracker's form.
+`src/lib/situationalTrends.ts` — deliberately different from a typical trend
+site: every result is measured against the real closing spread/total (not a
+flat 50%, which lets "good teams cover more" masquerade as a real edge), and
+every card shows Record, ROI%, cover/over rate, Units, current Streak, Last
+10, Games, and Years (ROI/Units assume a flat 1-unit bet at standard -110,
+disclosed, since there's no historical per-game price archive) plus a
+cumulative-units sparkline. A trend needs 30+ decided games before being
+marked **trusted** — most curated situations, measured honestly over their
+full history rather than cherry-picked, actually show a small negative ROI
+once real vig is counted, which is the correct, well-known truth that most
+"trends" don't beat the vig.
+
+- **Team Trends** (`src/lib/teamTrendPresets.ts`) — a preset battery of ~12
+  angles (home/away, favorite/underdog, division, rest) run automatically
+  for one chosen team.
+- **Today** (`src/lib/todaysTrends.ts`) — cross-references live odds against
+  every team playing right now, showing the exact matching curated trend for
+  their real home/away + favorite/underdog spot before kickoff.
+- **Build Your Own** (`src/lib/customTrends.ts`) — combine filters yourself;
+  every combination still runs through the identical trust gate and ROI math
+  as the curated list, closing the classic unlimited-filter-trend-builder
+  p-hacking trap by construction instead of a disclaimer.
+- **My Trends** (`src/lib/savedTrends.ts`) — a personal saved list,
+  localStorage-backed like favorites, recomputed live rather than frozen.
+  Scoped to one browser for now; a real shared feed where other people
+  publish and discover trends too is a deliberately deferred feature — it
+  needs an actual backend/database this static app doesn't have.
+
+## Bankroll Tracker
+
+Log real bets, settle them as win/loss (or let structured spread/total/props
+bets — `src/lib/bankroll.ts`'s `BetEntry.betType`/`line`/`side` — auto-settle
+against the final score via `src/lib/autoGradeBets.ts`), and compare two
+bankroll paths side by side: **realized** (what actually happened) vs.
+**theoretical** (the same picks/outcomes sized at recommended fractional-Kelly
+instead) — isolating sizing discipline from pick quality. Also computes
+**closing line value** (`src/lib/clv.ts`): whether a logged bet's price beat
+the closing line, the standard skill signal sharp bettors track independent
+of whether the bet actually won.
+
+Data is saved to **this browser's localStorage only** — per-device, not
+synced anywhere. That's a deliberate static-app tradeoff (no backend/auth),
+not an oversight.
 
 ## Tech stack
 
-Next.js (App Router) + TypeScript + Tailwind CSS. The formulas, Monte Carlo
-simulations, and the Phase 4 model/backtest all run entirely client-side —
-`public/data/*.json` is fetched once and everything else (Elo, regression,
-calibration, backtesting) happens in the browser. The This Week tab fetches
-live odds directly from the browser too — no backend needed there either,
-since ESPN's API is CORS-open. The bankroll tracker persists to localStorage
-for now rather than a real backend — see the Phase 3 note above. A real
-backend may still be added later (multi-device sync for the tracker, a
-licensed odds API for markets beyond moneyline).
+Next.js (App Router, static export — `output: "export"`) + TypeScript +
+Tailwind CSS. Every model, simulation, and backtest runs entirely
+client-side — `public/data/*.json` is fetched once and everything else (Elo,
+regression, calibration, backtesting, trend math) happens in the browser.
+Live odds/props come from The Odds API (paid, low-volume tier) and ESPN's
+public unofficial API (free, CORS-open); both are fetched directly from the
+browser, no backend needed. GitHub Actions workflows
+(`.github/workflows/`) refresh the historical archive daily and live odds
+every 2 hours.
 
-Testing: [Vitest](https://vitest.dev) for every math/data module.
+Testing: [Vitest](https://vitest.dev) for every pure-math/data module — 358
+tests as of this writing, one test file per lib module, no component tests
+(this app tests statistical correctness, not UI rendering; every UI change
+is verified manually against a live dev server instead).
 
 ## Getting started
 
 ```bash
 npm install
 npm run dev      # http://localhost:3000
-npm run test     # unit tests for the formula module
-npm run build    # production build
+npm run test     # unit tests for every lib module
+npm run build    # production static export
 npm run lint
 ```
+
+`scripts/prepare-data.mjs` and `scripts/fetch-live-odds.mjs` need no API key
+to run for the free historical archive; live odds/props need `ODDS_API_KEY`
+(The Odds API) in `.env.local` — see `.env.example`.

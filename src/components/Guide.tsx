@@ -63,12 +63,17 @@ function ChecklistGroup({ title, children }: { title: string; children: ReactNod
 const jumpLinks = [
   { href: "#checklist", label: "Start here (no experience needed)" },
   { href: "#big-picture", label: "The big picture" },
-  { href: "#this-week", label: "This Week (automated)" },
-  { href: "#edge", label: "1. Edge Calculator" },
-  { href: "#simulator", label: "2. Risk of Ruin" },
-  { href: "#tracker", label: "3. Bankroll Tracker" },
-  { href: "#model", label: "4. Probability Model" },
-  { href: "#research", label: "5. Game Research" },
+  { href: "#home", label: "Home" },
+  { href: "#matchup", label: "Research: Matchup" },
+  { href: "#this-week", label: "Research: This Week" },
+  { href: "#team-player", label: "Research: Team & Player" },
+  { href: "#games-rankings", label: "Research: Games & Rankings" },
+  { href: "#props", label: "Research: Props" },
+  { href: "#trends", label: "Trends" },
+  { href: "#calculator", label: "Tracker: Edge Calculator" },
+  { href: "#simulator", label: "Tracker: Risk of Ruin" },
+  { href: "#tracker", label: "Tracker: Bets & CLV" },
+  { href: "#model", label: "Guide: Probability Model" },
   { href: "#key-ideas", label: "Key ideas to remember" },
 ];
 
@@ -80,10 +85,10 @@ export function Guide() {
           Guide: how to actually use this app
         </h1>
         <p className="mt-1 text-sm" style={{ color: "var(--text-secondary)" }}>
-          One job, several tools: turn a probability estimate into a safe, honest answer about
-          whether to bet and how much. Nothing here predicts winners — you (or the model
-          tab, or the automated This Week tab) supply the probability, Research helps you
-          stress-test it, and everything else is about sizing and survival.
+          One job, five destinations: turn a probability estimate into a safe, honest answer about
+          whether to bet and how much. Nothing here predicts winners — you (or the model, or the
+          automated This Week tab) supply the probability, Research helps you stress-test it and
+          dig into any team, player, or trend yourself, and Tracker is about sizing and survival.
         </p>
       </div>
 
@@ -116,8 +121,8 @@ export function Guide() {
 
         <ChecklistGroup title="Part 1 — One-time setup">
           <Step n={1}>
-            Click the <strong style={{ color: "var(--text-primary)" }}>Bankroll Tracker</strong>{" "}
-            tab at the top of the page.
+            Click <strong style={{ color: "var(--text-primary)" }}>Tracker</strong> at the top of
+            the page — it opens on the bet log (&quot;Bets &amp; CLV&quot;) tab by default.
           </Step>
           <Step n={2}>
             At the top, find the box labeled <strong style={{ color: "var(--text-primary)" }}>Starting bankroll</strong>. Type
@@ -133,8 +138,9 @@ export function Guide() {
 
         <ChecklistGroup title="Part 2 — Whenever you want to find a bet this week">
           <Step n={1}>
-            Click the <strong style={{ color: "var(--text-primary)" }}>This Week</strong> tab, then
-            pick a sport (college football or NFL).
+            Click <strong style={{ color: "var(--text-primary)" }}>Research</strong>, then the{" "}
+            <strong style={{ color: "var(--text-primary)" }}>This Week</strong> sub-tab, then pick
+            a sport (college football or NFL).
           </Step>
           <Step n={2}>
             Wait a few seconds. You&apos;ll see a message saying it&apos;s fetching this
@@ -171,10 +177,10 @@ export function Guide() {
             button on that same box.
           </Step>
           <Step n={3}>
-            You&apos;ll land on the Bankroll Tracker tab with a form already mostly filled in for
-            you. Double-check the &quot;Stake ($)&quot; box matches the amount you actually bet —
-            if you bet a different amount than what was suggested, change that number to match
-            reality. Being honest here is what makes the rest of this useful.
+            You&apos;ll land on Tracker&apos;s Bets &amp; CLV tab with a form already mostly filled
+            in for you. Double-check the &quot;Stake ($)&quot; box matches the amount you actually
+            bet — if you bet a different amount than what was suggested, change that number to
+            match reality. Being honest here is what makes the rest of this useful.
           </Step>
           <Step n={4}>
             Click the blue <strong style={{ color: "var(--text-primary)" }}>Log bet</strong>{" "}
@@ -184,18 +190,21 @@ export function Guide() {
         </ChecklistGroup>
 
         <ChecklistGroup title="Part 4 — After the game finishes">
-          <Step n={1}>Come back to the Bankroll Tracker tab.</Step>
-          <Step n={2}>Find your bet in the list — it still says &quot;pending.&quot;</Step>
+          <Step n={1}>Come back to Tracker&apos;s Bets &amp; CLV tab.</Step>
+          <Step n={2}>
+            Find your bet in the list — it still says &quot;pending,&quot; or has already
+            auto-settled if it was logged from a This Week/Research card (see below).
+          </Step>
           <Step n={3}>
-            Click <strong style={{ color: "var(--status-good)" }}>Win</strong> if you won the bet,
-            or <strong style={{ color: "var(--status-critical)" }}>Loss</strong> if you
-            didn&apos;t. That&apos;s the only thing you need to do — everything else updates on
+            If it&apos;s still pending, click <strong style={{ color: "var(--status-good)" }}>Win</strong>{" "}
+            if you won the bet, or <strong style={{ color: "var(--status-critical)" }}>Loss</strong> if
+            you didn&apos;t. That&apos;s the only thing you need to do — everything else updates on
             its own.
           </Step>
         </ChecklistGroup>
 
         <ChecklistGroup title="Part 5 — Checking how you're actually doing (do this anytime)">
-          <Step n={1}>On the Bankroll Tracker tab, look at the row of numbers near the top.</Step>
+          <Step n={1}>On Tracker&apos;s Bets &amp; CLV tab, look at the row of numbers near the top.</Step>
           <Step n={2}>
             <strong style={{ color: "var(--text-primary)" }}>Current bankroll</strong> is how much
             money you have right now, based on every bet you&apos;ve logged and settled.
@@ -225,14 +234,14 @@ export function Guide() {
         <Callout kind="tip">
           That&apos;s the whole loop: check This Week → place a real bet → log it → settle it once
           it&apos;s over → glance at your numbers. Repeat every week. Everything else on this page
-          explains the reasoning behind the numbers, for whenever you&apos;re curious — you never
-          have to read it to use the app.
+          explains the reasoning behind the numbers, and every other tool available, for whenever
+          you&apos;re curious — you never have to read it to use the app.
         </Callout>
       </Section>
 
       <Section id="big-picture" title="The big picture">
         <p style={{ color: "var(--text-secondary)" }}>
-          The four tabs are meant to be used together, roughly in this order, whenever you&apos;re
+          The tools are meant to be used together, roughly in this order, whenever you&apos;re
           considering a real bet:
         </p>
         <ol className="flex flex-col gap-2 pl-5" style={{ color: "var(--text-secondary)" }}>
@@ -242,12 +251,12 @@ export function Guide() {
             <Link href="/model" className="underline">
               Probability Model
             </Link>{" "}
-            tab if it&apos;s NFL or college football.
+            if it&apos;s NFL or college football.
           </li>
           <li className="list-decimal">
             <strong style={{ color: "var(--text-primary)" }}>Check the edge.</strong> Plug that
             probability and the odds into the{" "}
-            <Link href="/" className="underline">
+            <Link href="/calculator" className="underline">
               Edge Calculator
             </Link>
             . If it says no edge, stop — don&apos;t bet. If there&apos;s an edge, it tells you the
@@ -255,49 +264,118 @@ export function Guide() {
           </li>
           <li className="list-decimal">
             <strong style={{ color: "var(--text-primary)" }}>Stress-test the sizing rule</strong>{" "}
-            (optional, but worth doing once). Use the{" "}
+            (optional, but worth doing once). Use{" "}
             <Link href="/simulator" className="underline">
               Risk of Ruin
             </Link>{" "}
-            tab with your typical edge size to see what your chosen stake fraction actually does
+            with your typical edge size to see what your chosen stake fraction actually does
             to a bankroll over hundreds of bets, and how often it goes bust.
           </li>
           <li className="list-decimal">
             <strong style={{ color: "var(--text-primary)" }}>Place the bet, then log it</strong> in
             the{" "}
             <Link href="/tracker" className="underline">
-              Bankroll Tracker
+              Tracker
             </Link>
-            . Settle it as a win or loss once it resolves, and let the tracker keep an honest
-            running record of how you&apos;re actually doing.
+            . Settle it as a win or loss once it resolves, and let it keep an honest running
+            record of how you&apos;re actually doing.
           </li>
         </ol>
         <Callout kind="tip">
-          For NFL or college football specifically, the{" "}
+          For NFL or college football specifically,{" "}
           <Link href="/this-week" className="underline">
             This Week
           </Link>{" "}
-          tab automates steps 1 and 2 — it pulls this week&apos;s games and live odds itself and
+          automates steps 1 and 2 — it pulls this week&apos;s games and live odds itself and
           shows you only the ones worth a look. You still don&apos;t need the Probability Model
-          tab (or This Week) to use this app at all — with your own view on a game&apos;s win
+          (or This Week) to use this app at all — with your own view on a game&apos;s win
           probability, skip straight to the Edge Calculator with your own number.
         </Callout>
       </Section>
 
-      <Section id="this-week" title="This Week (automated, NFL &amp; college football)">
+      <Section id="home" title="Home">
+        <p style={{ color: "var(--text-secondary)" }}>
+          The Command Center. Star any team or player — on their own page, or on a Trends card —
+          and it shows up here with live context: a team&apos;s current rank and next opponent, a
+          player&apos;s last game line. This becomes your own dashboard instead of a generic
+          landing page. Nothing starred yet? It just shows an &quot;Explore&quot; grid straight to
+          every tool below.
+        </p>
+      </Section>
+
+      <Section id="matchup" title="Research: Matchup">
+        <p style={{ color: "var(--text-secondary)" }}>
+          Everything the model sees for a specific matchup, laid out for you to dig into yourself
+          — not to replace your own judgment, but to give it something real to work with. Open it
+          from a{" "}
+          <strong style={{ color: "var(--text-primary)" }}>Research this game</strong> link on any
+          card in This Week (including flagged and no-edge games — an automated &quot;no edge&quot;
+          call just means the model and the market agree, not that there&apos;s nothing worth a
+          closer look), or pick any two teams yourself on the Matchup tab directly.
+        </p>
+
+        <SubHeading>What&apos;s on the page</SubHeading>
+        <dl className="flex flex-col gap-2">
+          <Field term="Is this a good bet?">
+            The same pick/stake check as This Week, but for any matchup you research — not just the
+            ones ESPN has live odds for, and not just moneyline. If you opened this page from a
+            This Week card, the moneylines are pre-filled from the live odds already; every field
+            is always editable, so you can check a line you found elsewhere or a purely
+            hypothetical one. Enter a spread and/or total line (both sides default to standard
+            -110, editable if you have the real price) and each gets its own real cover/over
+            probability and Kelly stake, exactly like moneyline — using the actual historical
+            spread of outcomes for that model (distribution-free, not a bell-curve assumption)
+            rather than pretending the point estimate itself is precise. &quot;Model implies&quot;
+            still shows the bare point estimate above the check — checked against real historical
+            market lines, that estimate alone runs about 8 spread points / 4 total points off the
+            real number on average (sometimes much more), which is exactly why the check below
+            asks how far the line sits from the model&apos;s whole range of likely outcomes
+            instead of trusting the single number.
+          </Field>
+          <Field term="Model probability, decomposed">
+            Not just a number — how much of it came from Elo alone, versus how much the added team
+            stats (and, for NFL, the presumed starting QBs) moved it. Lets you judge whether the
+            model&apos;s conviction rests on one signal or several agreeing.
+          </Field>
+          <Field term="Elo rating trend">
+            Both teams&apos; last several games plotted side by side — climbing means beating
+            expectations lately, flattening or dropping means the opposite.
+          </Field>
+          <Field term="Recent form &amp; head-to-head">
+            Plain game logs: who each team just played, what happened, and every prior meeting
+            between these two teams in the dataset. The number next to each opponent&apos;s name is
+            <em> their</em> Elo rating going into that game — a win over a 1650-rated team says a
+            lot more than a win over a 1350 one, and Elo already accounts for that when it updates
+            a team&apos;s own rating; this just makes that strength-of-schedule effect visible
+            instead of only baked invisibly into the final number.
+          </Field>
+          <Field term="Team stat trends (NFL only)">
+            Total yards, turnover margin, and offensive efficiency, one point per game — the same
+            numbers the NFL model actually trains on, so you can see the trend behind the diff.
+          </Field>
+        </dl>
+
+        <Callout kind="tip">
+          Every edge card and every collapsed &quot;flagged&quot; or &quot;no edge&quot; item in
+          This Week has its own Research link — the model only recommends a small slice of each
+          week&apos;s games, but every game is here to look into if you have your own angle
+          (injury news, a rivalry factor, weather) the model can&apos;t see.
+        </Callout>
+      </Section>
+
+      <Section id="this-week" title="Research: This Week (automated, NFL &amp; college football)">
         <p style={{ color: "var(--text-secondary)" }}>
           Pick a sport, and it does steps 1 and 2 of the big picture above for you: pulls this
           week&apos;s upcoming games and live odds automatically, runs each one through the same
-          probability model as the Model tab (NFL includes real team-stat features; college
+          probability model as the Model page (NFL includes real team-stat features; college
           football is Elo-only — see below), and surfaces only the games worth a second look —
-          sized against your current bankroll from the Tracker. This is the tab built specifically
-          so you have less to type and fewer chances to make a manual-entry mistake.
+          sized against your current bankroll from Tracker.
         </p>
 
         <SubHeading>How to use it</SubHeading>
         <ol className="flex flex-col gap-1 pl-5" style={{ color: "var(--text-secondary)" }}>
           <li className="list-decimal">
-            Open the This Week tab, pick NFL or college football — it loads that week&apos;s
+            Open Research → This Week, pick NFL or college football — it loads that week&apos;s
             schedule and odds on its own.
           </li>
           <li className="list-decimal">
@@ -310,8 +388,8 @@ export function Guide() {
           </li>
           <li className="list-decimal">
             Click <strong style={{ color: "var(--text-primary)" }}>Log this bet</strong> on a card
-            you actually place — it carries the numbers straight into the Bankroll Tracker&apos;s
-            form so you don&apos;t retype them.
+            you actually place — it carries the numbers straight into Tracker&apos;s form so you
+            don&apos;t retype them.
           </li>
         </ol>
 
@@ -353,19 +431,131 @@ export function Guide() {
         </dl>
 
         <Callout kind="warning">
-          This is still the same simplified model from the Probability Model tab — no injuries,
-          weather, or roster news factored in — reading live odds from one sportsbook via
-          ESPN&apos;s public, unofficial API, which can change or go down without notice. Treat
-          every recommendation here as a starting point to sanity-check against what you actually
-          know about the matchup, not a guarantee.
+          This is still the same simplified model from the Probability Model page — no weather or
+          roster news factored in beyond what&apos;s described below — reading live odds from
+          sportsbooks via The Odds API and ESPN&apos;s public, unofficial API, either of which can
+          change or go down without notice. Treat every recommendation here as a starting point to
+          sanity-check against what you actually know about the matchup, not a guarantee.
         </Callout>
       </Section>
 
-      <Section id="edge" title="1. Edge Calculator">
+      <Section id="team-player" title="Research: Team &amp; Player">
+        <p style={{ color: "var(--text-secondary)" }}>
+          Two more Research sub-tabs, for when you want to dig into one thing rather than a
+          matchup.
+        </p>
+        <dl className="flex flex-col gap-2">
+          <Field term="Team">
+            One team&apos;s own page: current Elo and rank, an independent second-opinion rating
+            (SRS — margin-of-victory based, no home-field adjustment, computed entirely from final
+            scores, never fed into the win-probability model), opponent-adjusted offense/defense
+            rank, a rating-trend chart, recent form, and every upcoming game with the model&apos;s
+            read on it. Tap the star next to the team name to pin it to Home.
+          </Field>
+          <Field term="Player">
+            Search any player who has appeared in a box score — not just the ones with a live prop
+            edge today. Shows season averages, the model&apos;s own projection, every book&apos;s
+            current line, a hit-rate table (green/yellow/red, same color scale Outlier.bet uses) at
+            last-5/last-10/season splits, a bar chart of recent games against the line, and a
+            current streak badge. A player who only shows up as a defensive/tackle leader gets their
+            raw game log instead — tackles aren&apos;t modeled yet, so there&apos;s no fake
+            projection for them. Star a player here too, to pin them to Home.
+          </Field>
+        </dl>
+      </Section>
+
+      <Section id="games-rankings" title="Research: Games &amp; Rankings">
+        <dl className="flex flex-col gap-2">
+          <Field term="Games">
+            The full schedule — not just today&apos;s picks. &quot;This Season&quot; shows every
+            game played or upcoming, most current first; &quot;History&quot; shows every completed
+            game from before this season, most recent first. Filter to one team, then tap any
+            matchup to open it in Research.
+          </Field>
+          <Field term="Rankings">
+            Every team, ranked by current Elo, sortable by any column — Δ Season (how far a
+            team&apos;s rating has moved since their first game this year), SRS (the same
+            second-opinion rating from the Team page), record, PPG, opponent-adjusted offense/
+            defense, and (where available) yards/game, turnover margin, and EPA/game. A link at the
+            bottom leads to opponent-adjusted QB Rankings, the same method applied to starting
+            quarterbacks instead of teams.
+          </Field>
+        </dl>
+      </Section>
+
+      <Section id="props" title="Research: Props">
+        <p style={{ color: "var(--text-secondary)" }}>
+          Player prop edges, run through the exact same de-vig + trust-guardrail pipeline as
+          moneyline picks — a real model-vs-market edge, not just a hit-rate count. Projects each
+          player&apos;s passing/rushing/receiving yards from their own walk-forward season-to-date
+          average (never using games not yet played), then checks that projection against every
+          book&apos;s posted line for a real cover probability — using the actual historical
+          residual distribution for that stat category, not a bell-curve assumption, so a
+          right-skewed stat (a few huge games pulling the average up) doesn&apos;t quietly bias the
+          over/under split the way a Normal-distribution model would.
+        </p>
+        <Callout kind="warning">
+          This uses a plain season-to-date average, not an opponent-adjusted projection (that&apos;s
+          a planned refinement) — validated separately per category on real history, and rushing,
+          receiving, and passing all beat a naive league-average baseline by very different margins.
+          Weight a passing or receiving edge with more caution than a rushing one. Receptions,
+          touchdowns, and anytime-TD props aren&apos;t modeled yet — they need a different
+          (count-based) approach than yardage does.
+        </Callout>
+      </Section>
+
+      <Section id="trends" title="Trends">
+        <p style={{ color: "var(--text-secondary)" }}>
+          Situational ATS/O-U trends — deliberately different from a typical trend site: every
+          result is measured against the real closing line (not a flat 50%, which lets &quot;good
+          teams cover more&quot; masquerade as a real situational edge), and every trend shows its
+          sample size instead of hiding it. Five sub-tabs:
+        </p>
+        <dl className="flex flex-col gap-2">
+          <Field term="Trusted Trends">
+            A curated list (favorite/underdog splits, division games, rest, weather) — each card
+            shows Record, ROI%, cover/over rate, Units, current Streak, Last 10, Games, and Years,
+            plus a cumulative-units chart. ROI/Units assume a flat 1-unit bet at standard -110 on
+            every qualifying game (there&apos;s no historical per-game price archive to do
+            better) — a disclosed approximation, not hidden in fine print. A trend needs at least 30
+            decided games before it&apos;s marked <strong style={{ color: "var(--text-primary)" }}>trusted</strong>{" "}
+            (a green border); most curated situations, run over their FULL history rather than
+            cherry-picked, actually show a small negative ROI once real vig is counted — that&apos;s
+            the honest, well-known truth that most &quot;trends&quot; don&apos;t beat the vig, not a
+            bug.
+          </Field>
+          <Field term="Team Trends">
+            Pick a team, and every angle worth checking against them (home/away, favorite/underdog,
+            all four combinations, division games, rest) runs at once — the same math as Build Your
+            Own, just pre-scoped to one team.
+          </Field>
+          <Field term="Today">
+            Every team playing in a game with a posted line right now, matched to the curated trend
+            for their exact home/away + favorite/underdog spot — so you can see what applies before
+            kickoff without rebuilding it yourself. Needs the live-odds feed to be populated; shows
+            nothing if it isn&apos;t.
+          </Field>
+          <Field term="Build Your Own">
+            Combine your own filters (team, role, location, division game, and — NFL only — rest and
+            weather) into a custom trend. Every combination still runs through the same 30-game
+            trust gate and ROI/units math as the curated list, so a thin custom slice reads as
+            &quot;small sample,&quot; not a false edge — the usual trap with unlimited-filter trend
+            builders, closed by construction instead of a disclaimer.
+          </Field>
+          <Field term="My Trends">
+            Tap the star on any trend card (anywhere in Trends) to save it here — a personal running
+            list, recomputed live every time you open it, not a frozen snapshot. Saved per browser,
+            not shared with anyone else yet.
+          </Field>
+        </dl>
+      </Section>
+
+      <Section id="calculator" title="Tracker: Edge Calculator">
         <p style={{ color: "var(--text-secondary)" }}>
           Answers one question: <em>given this probability and these odds, is there really an
           edge, and if so, how much should I stake?</em> This is the tool to open every single
-          time before placing a bet.
+          time before placing a bet, for anything the rest of the app doesn&apos;t already check
+          for you — a manual line, a different sport, a hypothetical.
         </p>
 
         <SubHeading>What you enter</SubHeading>
@@ -435,7 +625,7 @@ export function Guide() {
         </Callout>
       </Section>
 
-      <Section id="simulator" title="2. Risk-of-Ruin Simulator">
+      <Section id="simulator" title="Tracker: Risk of Ruin">
         <p style={{ color: "var(--text-secondary)" }}>
           Answers: <em>if I keep betting this way for a long time, what actually happens to my
           bankroll — and how does that differ from what the &quot;average&quot; outcome makes it look
@@ -490,7 +680,7 @@ export function Guide() {
         </Callout>
       </Section>
 
-      <Section id="tracker" title="3. Bankroll Tracker">
+      <Section id="tracker" title="Tracker: Bets &amp; CLV">
         <p style={{ color: "var(--text-secondary)" }}>
           Your actual betting log. Answers: <em>am I really making money, and if not, is it my
           picks or my sizing that&apos;s the problem?</em>
@@ -503,7 +693,11 @@ export function Guide() {
             Every time you place a real bet, log it: description, the p you used, the odds, and
             your actual stake. It starts as &quot;pending.&quot;
           </li>
-          <li className="list-decimal">Once the game/event resolves, click Win or Loss on that row to settle it.</li>
+          <li className="list-decimal">
+            Once the game/event resolves, click Win or Loss on that row to settle it — or wait, since
+            a bet logged from a This Week/Research/Trends card carries enough structured data to
+            auto-settle itself against the final score the next time you open this page.
+          </li>
           <li className="list-decimal">
             Watch the stats and chart update — that&apos;s your real track record, building up
             over time.
@@ -513,11 +707,11 @@ export function Guide() {
         <SubHeading>What the numbers mean</SubHeading>
         <dl className="flex flex-col gap-2">
           <Field term="Current bankroll / Total P&L">Where you actually stand right now, in dollars.</Field>
-          <Field term="Win rate">% of settled bets you&apos;ve won.</Field>
+          <Field term="Win rate">% of settled bets you&apos;ve won (pushes don&apos;t count against you).</Field>
           <Field term="Current / max drawdown">
             How far below your peak bankroll you are right now, and the worst it&apos;s ever been.
             Large drawdowns are normal even with a real edge — that&apos;s the volatility from
-            Tool 1 showing up in real life.
+            Risk of Ruin showing up in real life.
           </Field>
           <Field term="Realized vs. theoretical (the chart)">
             &quot;Realized&quot; is what actually happened with your real stakes. &quot;Theoretical&quot;
@@ -527,6 +721,12 @@ export function Guide() {
             it&apos;s <em>above</em>, you&apos;ve been sizing more aggressively than recommended,
             which means better luck so far but more risk than the model would advise.
           </Field>
+          <Field term="Closing line value (CLV)">
+            Once a logged bet&apos;s game reaches kickoff, shows whether the price you actually got
+            beat the closing line — the standard skill signal sharp bettors track independent of
+            whether any individual bet won, since a good price beaten by bad luck is still a good
+            decision.
+          </Field>
         </dl>
 
         <Callout kind="warning">
@@ -535,11 +735,12 @@ export function Guide() {
         </Callout>
       </Section>
 
-      <Section id="model" title="4. Probability Model">
+      <Section id="model" title="Guide: Probability Model">
         <p style={{ color: "var(--text-secondary)" }}>
           Where the probability in step 1 can come from instead of a gut estimate, for NFL or
           college football specifically. It trains a small, transparent model on real historical
-          games and is upfront about how much to trust it.
+          games and is upfront about how much to trust it. Lives here in the Guide rather than its
+          own top-level nav item, since it&apos;s methodology, not a tool you visit weekly.
         </p>
 
         <SubHeading>How to read it</SubHeading>
@@ -618,66 +819,6 @@ export function Guide() {
         </Callout>
       </Section>
 
-      <Section id="research" title="5. Game Research">
-        <p style={{ color: "var(--text-secondary)" }}>
-          Everything the model sees for a specific matchup, laid out for you to dig into yourself
-          — not to replace your own judgment, but to give it something real to work with. Open it
-          from a{" "}
-          <strong style={{ color: "var(--text-primary)" }}>Research this game</strong> link on any
-          card in This Week (including flagged and no-edge games — an automated &quot;no edge&quot;
-          call just means the model and the market agree, not that there&apos;s nothing worth a
-          closer look), or pick any two teams yourself on the{" "}
-          <Link href="/research" className="underline">
-            Research page
-          </Link>{" "}
-          directly.
-        </p>
-
-        <SubHeading>What&apos;s on the page</SubHeading>
-        <dl className="flex flex-col gap-2">
-          <Field term="Is this a good bet?">
-            The same pick/stake check as This Week, but for any matchup you research — not just the
-            ones ESPN has live odds for. If you opened this page from a This Week card, the
-            moneylines are pre-filled from the live odds already; either way, they&apos;re always
-            editable, so you can check a line you found elsewhere or a purely hypothetical one. Spread
-            and total are there just for your own reference and don&apos;t feed the calculation —
-            everything here runs on moneylines, the same as the Edge Calculator. Below that,
-            &quot;Model implies&quot; shows the model&apos;s own spread and total estimate — purely
-            informational, not a bet recommendation. Checked against real historical market lines,
-            the spread estimate runs about 8 points off the real number on average (sometimes much
-            more), the total about 4 — useful context, not a substitute for an actual line.
-          </Field>
-          <Field term="Model probability, decomposed">
-            Not just a number — how much of it came from Elo alone, versus how much the added team
-            stats moved it. Lets you judge whether the model&apos;s conviction rests on
-            one signal or several agreeing.
-          </Field>
-          <Field term="Elo rating trend">
-            Both teams&apos; last several games plotted side by side — climbing means beating
-            expectations lately, flattening or dropping means the opposite.
-          </Field>
-          <Field term="Recent form &amp; head-to-head">
-            Plain game logs: who each team just played, what happened, and every prior meeting
-            between these two teams in the dataset. The number next to each opponent&apos;s name is
-            <em> their</em> Elo rating going into that game — a win over a 1650-rated team says a
-            lot more than a win over a 1350 one, and Elo already accounts for that when it updates
-            a team&apos;s own rating; this just makes that strength-of-schedule effect visible
-            instead of only baked invisibly into the final number.
-          </Field>
-          <Field term="Team stat trends (NFL only)">
-            Total yards, turnover margin, and offensive efficiency, one point per game — the same
-            numbers the NFL model actually trains on, so you can see the trend behind the diff.
-          </Field>
-        </dl>
-
-        <Callout kind="tip">
-          Every edge card and every collapsed &quot;flagged&quot; or &quot;no edge&quot; item in
-          This Week has its own Research link — the model only recommends a small slice of each
-          week&apos;s games, but every game is here to look into if you have your own angle
-          (injury news, a rivalry factor, weather) the model can&apos;t see.
-        </Callout>
-      </Section>
-
       <Section id="key-ideas" title="Key ideas to remember">
         <ul className="flex flex-col gap-2 pl-5" style={{ color: "var(--text-secondary)" }}>
           <li className="list-disc">
@@ -698,9 +839,14 @@ export function Guide() {
             — an overconfident model is more dangerous to size bets off of than no model at all.
           </li>
           <li className="list-disc">
+            <strong style={{ color: "var(--text-primary)" }}>Sample size before conclusions</strong>{" "}
+            — a trend with 100% win rate over 12 games and a trend with 55% over 500 games are not
+            equally trustworthy; Trends flags this everywhere on purpose.
+          </li>
+          <li className="list-disc">
             <strong style={{ color: "var(--text-primary)" }}>Track sizing and picking separately</strong>{" "}
-            — the bankroll tracker&apos;s realized-vs-theoretical comparison tells you which one is
-            actually costing you money.
+            — Tracker&apos;s realized-vs-theoretical comparison tells you which one is actually
+            costing you money.
           </li>
         </ul>
       </Section>
