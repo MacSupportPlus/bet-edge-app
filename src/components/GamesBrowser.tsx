@@ -101,16 +101,21 @@ export function GamesBrowser({ sport }: { sport: Sport }) {
       upcomingRows.push({ date: g.date, homeTeam: home, awayTeam: away, status: "upcoming", espnId: g.espnId });
     }
 
-    // "Current": this season's games + upcoming, most current first (upcoming
-    // games sort to the very top since they're the newest dates, then walk
-    // backward through the season already played) — not oldest-game-first,
-    // which buried what's actually relevant right now under August openers.
     const historyRows: ScheduleRow[] = snapshot.allGames
       .filter((g) => g.season !== snapshot.seasonGames[0]?.season)
       .map((g) => ({ date: g.date, homeTeam: g.homeTeam, awayTeam: g.awayTeam, status: "final", homeScore: g.homeScore, awayScore: g.awayScore }));
 
-    const source = view === "current" ? [...finalRows, ...upcomingRows] : historyRows;
-    const all = source.sort((a, b) => (a.date > b.date ? -1 : a.date < b.date ? 1 : 0));
+    const ascending = (a: ScheduleRow, b: ScheduleRow) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
+    const descending = (a: ScheduleRow, b: ScheduleRow) => (a.date > b.date ? -1 : a.date < b.date ? 1 : 0);
+
+    // "Current": what's happening soonest first, not furthest away first —
+    // upcoming games sorted ascending (the very next game at the top, not
+    // whatever's latest on the schedule) followed by this season's already-
+    // played games, most recent first.
+    const all =
+      view === "current"
+        ? [...[...upcomingRows].sort(ascending), ...[...finalRows].sort(descending)]
+        : [...historyRows].sort(descending);
     const filtered = teamFilter ? all.filter((r) => r.homeTeam === teamFilter || r.awayTeam === teamFilter) : all;
     return { rows: filtered, teamOptions: [...knownTeams].sort() };
   }, [snapshot, loading, teamFilter, sport, view]);
