@@ -1,9 +1,9 @@
-import { EdgeCalculator } from "@/components/EdgeCalculator";
+import { CommandCenter } from "@/components/CommandCenter";
 
 export default function Home() {
   return (
     <div className="flex flex-1 flex-col" style={{ background: "var(--background)" }}>
-      <EdgeCalculator />
+      <CommandCenter />
     </div>
   );
 }

@@ -1,0 +1,9 @@
+import { SituationalTrends } from "@/components/SituationalTrends";
+
+export default function TrendsCfbPage() {
+  return (
+    <div className="flex flex-1 flex-col" style={{ background: "var(--background)" }}>
+      <SituationalTrends sport="cfb" />
+    </div>
+  );
+}

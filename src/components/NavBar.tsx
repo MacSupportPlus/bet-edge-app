@@ -4,18 +4,18 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 const LINKS = [
+  { href: "/", label: "Home" },
+  { href: "/research", label: "Research", groupPrefixes: ["/research", "/team", "/player", "/games", "/this-week", "/rankings", "/props", "/players"] },
+  { href: "/trends", label: "Trends" },
+  { href: "/tracker", label: "Tracker", groupPrefixes: ["/tracker", "/simulator", "/calculator"] },
   { href: "/guide", label: "Guide" },
-  { href: "/this-week", label: "This Week" },
-  { href: "/picks", label: "Picks" },
-  { href: "/rankings", label: "Rankings" },
-  { href: "/players", label: "Players" },
-  { href: "/", label: "Edge Calculator" },
-  { href: "/simulator", label: "Risk of Ruin" },
-  { href: "/tracker", label: "Bankroll Tracker" },
-  { href: "/model", label: "Probability Model" },
-  { href: "/research", label: "Research" },
-  { href: "/team", label: "Team" },
 ];
+
+function isActive(pathname: string, link: (typeof LINKS)[number]): boolean {
+  if (link.href === "/") return pathname === "/";
+  const prefixes = link.groupPrefixes ?? [link.href];
+  return prefixes.some((p) => pathname === p || pathname.startsWith(`${p}/`));
+}
 
 export function NavBar() {
   const pathname = usePathname();
@@ -25,7 +25,7 @@ export function NavBar() {
       style={{ borderColor: "var(--card-border)", background: "var(--card-bg)" }}
     >
       {LINKS.map((link) => {
-        const active = link.href === "/" ? pathname === "/" : pathname === link.href || pathname.startsWith(`${link.href}/`);
+        const active = isActive(pathname, link);
         return (
           <Link
             key={link.href}
