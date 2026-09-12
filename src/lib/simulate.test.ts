@@ -99,27 +99,34 @@ describe("simulateEnsemble", () => {
     expect(a.ruinFraction).toEqual(b.ruinFraction);
   });
 
-  it("shows the ensemble average diverging above the median — the 'average is a lie' effect", () => {
-    // Positive-edge compounding over many bets produces a right-skewed
-    // (roughly log-normal) terminal distribution, so the arithmetic mean
-    // pulls above the median/typical path. This is the central thesis of
-    // the app and should hold robustly for a large ensemble over many bets.
-    const p = 0.55;
-    const b = 1;
-    const f = kellyFraction(p, b);
-    const result = simulateEnsemble({
-      p,
-      b,
-      startingBankroll: 1000,
-      rule: { type: "fraction", fraction: f },
-      numBets: 300,
-      numBettors: 3000,
-      seed: 42,
-    });
-    const finalMean = result.meanPath[result.meanPath.length - 1];
-    const finalMedian = result.medianPath[result.medianPath.length - 1];
-    expect(finalMean).toBeGreaterThan(finalMedian);
-  });
+  it(
+    "shows the ensemble average diverging above the median — the 'average is a lie' effect",
+    () => {
+      // Positive-edge compounding over many bets produces a right-skewed
+      // (roughly log-normal) terminal distribution, so the arithmetic mean
+      // pulls above the median/typical path. This is the central thesis of
+      // the app and should hold robustly for a large ensemble over many bets.
+      const p = 0.55;
+      const b = 1;
+      const f = kellyFraction(p, b);
+      const result = simulateEnsemble({
+        p,
+        b,
+        startingBankroll: 1000,
+        rule: { type: "fraction", fraction: f },
+        numBets: 300,
+        numBettors: 3000,
+        seed: 42,
+      });
+      const finalMean = result.meanPath[result.meanPath.length - 1];
+      const finalMedian = result.medianPath[result.medianPath.length - 1];
+      expect(finalMean).toBeGreaterThan(finalMedian);
+    },
+    // A 900,000-step simulation genuinely takes longer than Vitest's 5s
+    // default under parallel CPU load (observed flaking alongside 23 other
+    // test files) — not a hang, just a slow, real computation.
+    15000,
+  );
 
   it("all bettors survive when there is no way to lose more than staked and edge is certain (p=1)", () => {
     const result = simulateEnsemble({
@@ -147,23 +154,28 @@ describe("simulateEnsemble", () => {
     expect(result.ruinFraction).toBe(1);
   });
 
-  it("over-betting at 2x Kelly ruins bettors more often than full Kelly, for the same edge", () => {
-    const p = 0.55;
-    const b = 1;
-    const fStar = kellyFraction(p, b);
-    const base = {
-      p,
-      b,
-      startingBankroll: 1000,
-      numBets: 400,
-      numBettors: 2000,
-    };
-    const fullKelly = simulateEnsemble({ ...base, rule: { type: "fraction", fraction: fStar }, seed: 1 });
-    const doubleKelly = simulateEnsemble({
-      ...base,
-      rule: { type: "fraction", fraction: fStar * 2 },
-      seed: 2,
-    });
-    expect(doubleKelly.ruinFraction).toBeGreaterThan(fullKelly.ruinFraction);
-  });
+  it(
+    "over-betting at 2x Kelly ruins bettors more often than full Kelly, for the same edge",
+    () => {
+      const p = 0.55;
+      const b = 1;
+      const fStar = kellyFraction(p, b);
+      const base = {
+        p,
+        b,
+        startingBankroll: 1000,
+        numBets: 400,
+        numBettors: 2000,
+      };
+      const fullKelly = simulateEnsemble({ ...base, rule: { type: "fraction", fraction: fStar }, seed: 1 });
+      const doubleKelly = simulateEnsemble({
+        ...base,
+        rule: { type: "fraction", fraction: fStar * 2 },
+        seed: 2,
+      });
+      expect(doubleKelly.ruinFraction).toBeGreaterThan(fullKelly.ruinFraction);
+    },
+    // Same reasoning as the test above — an 800,000-step simulation, not a hang.
+    15000,
+  );
 });

@@ -75,3 +75,63 @@ export function matchKeyFor(sport: Sport, game: UpcomingGame, side: "home" | "aw
   }
   return side === "home" ? game.homeTeam : game.awayTeam;
 }
+
+/**
+ * The Odds API's NFL team names (e.g. "Pittsburgh Steelers") and the
+ * historical archive's own NFL naming (nflverse's short codes, e.g. "PIT")
+ * have zero string overlap — bridged with a small, stable, hand-written
+ * table (32 fixed entries) rather than any fuzzy matching. Kept in sync BY
+ * HAND with scripts/fetch-live-odds.mjs's own copy (a standalone Node
+ * script, can't import this client module directly) — same intentional
+ * duplication as that script's own COMBINING_DIACRITICS comment.
+ */
+export const NFL_DISPLAY_NAME_TO_CODE: Record<string, string> = {
+  "Arizona Cardinals": "ARI",
+  "Atlanta Falcons": "ATL",
+  "Baltimore Ravens": "BAL",
+  "Buffalo Bills": "BUF",
+  "Carolina Panthers": "CAR",
+  "Chicago Bears": "CHI",
+  "Cincinnati Bengals": "CIN",
+  "Cleveland Browns": "CLE",
+  "Dallas Cowboys": "DAL",
+  "Denver Broncos": "DEN",
+  "Detroit Lions": "DET",
+  "Green Bay Packers": "GB",
+  "Houston Texans": "HOU",
+  "Indianapolis Colts": "IND",
+  "Jacksonville Jaguars": "JAX",
+  "Kansas City Chiefs": "KC",
+  "Las Vegas Raiders": "LV",
+  "Los Angeles Chargers": "LAC",
+  "Los Angeles Rams": "LA",
+  "Miami Dolphins": "MIA",
+  "Minnesota Vikings": "MIN",
+  "New England Patriots": "NE",
+  "New Orleans Saints": "NO",
+  "New York Giants": "NYG",
+  "New York Jets": "NYJ",
+  "Philadelphia Eagles": "PHI",
+  "Pittsburgh Steelers": "PIT",
+  "San Francisco 49ers": "SF",
+  "Seattle Seahawks": "SEA",
+  "Tampa Bay Buccaneers": "TB",
+  "Tennessee Titans": "TEN",
+  "Washington Commanders": "WAS",
+};
+
+/**
+ * Resolves an Odds API team name (liveOdds.ts's homeTeam/awayTeam, e.g. "Pittsburgh
+ * Steelers" or "Ohio State Buckeyes") to the historical archive's own team name —
+ * NFL via the fixed table above, CFB via prefix matching (the archive's plain
+ * school name is always a prefix of the Odds API's "{School} {Mascot}" name).
+ */
+export function resolveOddsApiTeamName(sport: Sport, oddsApiName: string, knownTeams: ReadonlySet<string>): string | null {
+  if (sport === "nfl") return NFL_DISPLAY_NAME_TO_CODE[oddsApiName] ?? null;
+  const normalized = normalizeTeamName(oddsApiName);
+  for (const known of knownTeams) {
+    const normalizedKnown = normalizeTeamName(known);
+    if (normalized === normalizedKnown || normalized.startsWith(`${normalizedKnown} `)) return known;
+  }
+  return null;
+}

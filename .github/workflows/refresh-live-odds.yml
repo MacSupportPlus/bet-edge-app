@@ -1,0 +1,70 @@
+name: Refresh live odds
+
+# Live multi-book odds + player props (scripts/fetch-live-odds.mjs) for
+# upcoming games — forward-looking data, refreshed on its own much more
+# frequent schedule than refresh-data.yml's once-daily HISTORICAL archive
+# refresh, so real line movement is actually visible over time.
+#
+# Requires an ODDS_API_KEY repository secret (Settings -> Secrets and
+# variables -> Actions -> New repository secret) — the key from
+# https://the-odds-api.com. Runs will fail until that secret is added; once
+# it is, no further setup is needed.
+#
+# Deliberately skips `npm test`/`npm run build` (unlike refresh-data.yml) —
+# this job only touches public/data JSON, not code, and running the full
+# suite every couple of hours would burn Actions minutes for no benefit.
+
+on:
+  schedule:
+    # Every 2 hours, every day — CFB has games most days of the week in
+    # season, not just Saturday, and NFL line movement is worth catching on
+    # Thu/Sun/Mon. This is a private repo, so watch Settings -> Billing ->
+    # Actions minutes if this cadence turns out to run hotter than expected;
+    # tighten to specific days (e.g. "0 */2 * * 4,5,6,0,1" for Thu-Mon) if so.
+    - cron: "0 */2 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: refresh-live-odds
+  cancel-in-progress: false
+
+jobs:
+  refresh-live-odds:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Fetch live odds and player props
+        env:
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+        run: node scripts/fetch-live-odds.mjs | tee /tmp/refresh-log.txt
+
+      - name: Commit and push if data changed
+        run: |
+          if git diff --quiet -- public/data; then
+            echo "No data changes — nothing to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add public/data
+          {
+            echo "Automated live-odds refresh"
+            echo
+            cat /tmp/refresh-log.txt
+          } > /tmp/commit-message.txt
+          git commit -F /tmp/commit-message.txt
+          git push

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Game } from "./elo";
-import { primaryStarter, PlayerUsageRow } from "./playerUsage";
+import { primaryStarter, PlayerUsageRow, usageLeaders } from "./playerUsage";
 
 function game(gameId: string, date: string, season: number, homeTeam: string, awayTeam: string): Game {
   return { gameId, date, season, homeTeam, awayTeam, homeScore: 21, awayScore: 14, neutral: false };
@@ -68,5 +68,37 @@ describe("primaryStarter", () => {
 
   it("returns null when there's no usage data for this team/category/season", () => {
     expect(primaryStarter([], games, "Ohio State", "passing", 2024)).toBeNull();
+  });
+});
+
+describe("usageLeaders", () => {
+  const games: Game[] = [
+    game("g1", "2024-09-01", 2024, "Ohio State", "Akron"),
+    game("g2", "2024-09-08", 2024, "Marshall", "Ohio State"),
+    game("g3", "2024-09-15", 2024, "Ohio State", "Michigan"),
+  ];
+
+  it("ranks every usage leader by games led, most first", () => {
+    const usage: PlayerUsageRow[] = [
+      { gameId: "g1", team: "Ohio State", category: "passing", player: "Starter", rank: 1, statLine: [13, 20, 150, 1, 0] },
+      { gameId: "g2", team: "Ohio State", category: "passing", player: "Starter", rank: 1, statLine: [18, 25, 200, 2, 1] },
+      { gameId: "g3", team: "Ohio State", category: "passing", player: "Backup", rank: 1, statLine: [10, 15, 90, 0, 1] },
+    ];
+    const result = usageLeaders(usage, games, "Ohio State", "passing", 2024);
+    expect(result.map((r) => r.player)).toEqual(["Starter", "Backup"]);
+    expect(result[0].gamesLed).toBe(2);
+    expect(result[1].gamesLed).toBe(1);
+  });
+
+  it("primaryStarter matches usageLeaders' top entry exactly", () => {
+    const usage: PlayerUsageRow[] = [
+      { gameId: "g1", team: "Ohio State", category: "passing", player: "Starter", rank: 1, statLine: [13, 20, 150, 1, 0] },
+      { gameId: "g3", team: "Ohio State", category: "passing", player: "Backup", rank: 1, statLine: [10, 15, 90, 0, 1] },
+    ];
+    expect(primaryStarter(usage, games, "Ohio State", "passing", 2024)).toEqual(usageLeaders(usage, games, "Ohio State", "passing", 2024)[0]);
+  });
+
+  it("returns an empty array, not null, when there's no usage data", () => {
+    expect(usageLeaders([], games, "Ohio State", "passing", 2024)).toEqual([]);
   });
 });

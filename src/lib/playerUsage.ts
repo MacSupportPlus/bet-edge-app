@@ -70,14 +70,16 @@ export interface StarterInfo {
   statLine: number[];
 }
 
-/** This team's most-frequent usage leader in one category this season, from real per-game data (not a live depth chart), with their combined stat line. */
-export function primaryStarter(
-  usage: PlayerUsageRow[],
-  games: Game[],
-  team: string,
-  category: UsageCategory,
-  season: number,
-): StarterInfo | null {
+/**
+ * Every player who's led this team in one category at least once this
+ * season, ranked by how many games they led (most first) — from real
+ * per-game data (not a live depth chart), each with their combined stat
+ * line across exactly the games they led. primaryStarter (index 0) is the
+ * common case; index 1 is this function's other reason to exist — a
+ * presumed backup, for when the primary starter shows up hurt on a live
+ * injury report (see qbValue.ts's live-prediction callers).
+ */
+export function usageLeaders(usage: PlayerUsageRow[], games: Game[], team: string, category: UsageCategory, season: number): StarterInfo[] {
   const teamGameIds = new Set(
     games.filter((g) => g.season === season && g.gameId && (g.homeTeam === team || g.awayTeam === team)).map((g) => g.gameId!),
   );
@@ -89,29 +91,41 @@ export function primaryStarter(
   // Only rank 1 counts as "the game's leader" for continuity purposes — rank
   // 2/3 rows exist for depth-chart/ranking use, not to be treated as ties.
   const rowsThisSeason = usage.filter((r) => r.team === team && r.category === category && r.rank === 1 && teamGameIds.has(r.gameId));
-  if (rowsThisSeason.length === 0) return null;
+  if (rowsThisSeason.length === 0) return [];
 
   const leaderByGame = new Map(rowsThisSeason.map((r) => [r.gameId, r.player]));
   const leadersInOrder = orderedGameIds.map((id) => leaderByGame.get(id)).filter((p): p is string => !!p);
 
   const counts = new Map<string, number>();
   for (const p of leadersInOrder) counts.set(p, (counts.get(p) ?? 0) + 1);
-  const [topPlayer, gamesLed] = [...counts.entries()].sort((a, b) => b[1] - a[1])[0];
+  const ranked = [...counts.entries()].sort((a, b) => b[1] - a[1]);
 
   const fieldCount = USAGE_STAT_FIELDS[category].length;
-  const statLine = new Array(fieldCount).fill(0);
-  for (const r of rowsThisSeason) {
-    if (r.player !== topPlayer) continue;
-    for (let i = 0; i < fieldCount; i++) statLine[i] += r.statLine[i] ?? 0;
-  }
+  return ranked.map(([player, gamesLed]) => {
+    const statLine = new Array(fieldCount).fill(0);
+    for (const r of rowsThisSeason) {
+      if (r.player !== player) continue;
+      for (let i = 0; i < fieldCount; i++) statLine[i] += r.statLine[i] ?? 0;
+    }
+    return {
+      player,
+      gamesLed,
+      totalGames: leadersInOrder.length,
+      ledMostRecentGame: leadersInOrder[leadersInOrder.length - 1] === player,
+      statLine,
+    };
+  });
+}
 
-  return {
-    player: topPlayer,
-    gamesLed,
-    totalGames: leadersInOrder.length,
-    ledMostRecentGame: leadersInOrder[leadersInOrder.length - 1] === topPlayer,
-    statLine,
-  };
+/** This team's most-frequent usage leader in one category this season — see usageLeaders for the full ranked list (e.g. a presumed backup at index 1). */
+export function primaryStarter(
+  usage: PlayerUsageRow[],
+  games: Game[],
+  team: string,
+  category: UsageCategory,
+  season: number,
+): StarterInfo | null {
+  return usageLeaders(usage, games, team, category, season)[0] ?? null;
 }
 
 /** "213/312, 2450 yds, 21 TD, 6 INT" style summary, field order/labels from USAGE_STAT_FIELDS. */

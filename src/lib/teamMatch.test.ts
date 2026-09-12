@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { matchTeamName, normalizeTeamName } from "./teamMatch";
+import { matchTeamName, normalizeTeamName, resolveOddsApiTeamName } from "./teamMatch";
 
 describe("normalizeTeamName", () => {
   it("lowercases and strips punctuation", () => {
@@ -57,5 +57,27 @@ describe("matchTeamName", () => {
     expect(matchTeamName("LAR", nflKnown)).toBe("LA");
     expect(matchTeamName("WSH", nflKnown)).toBe("WAS");
     expect(matchTeamName("SEA", nflKnown)).toBe("SEA");
+  });
+});
+
+describe("resolveOddsApiTeamName", () => {
+  it("resolves an NFL display name via the fixed table", () => {
+    expect(resolveOddsApiTeamName("nfl", "Pittsburgh Steelers", new Set())).toBe("PIT");
+    expect(resolveOddsApiTeamName("nfl", "Seattle Seahawks", new Set())).toBe("SEA");
+  });
+
+  it("returns null for an unrecognized NFL display name", () => {
+    expect(resolveOddsApiTeamName("nfl", "Some Fake Team", new Set())).toBeNull();
+  });
+
+  it("resolves a CFB name via school-name prefix matching", () => {
+    const known = new Set(["Ohio State", "Michigan"]);
+    expect(resolveOddsApiTeamName("cfb", "Ohio State Buckeyes", known)).toBe("Ohio State");
+    expect(resolveOddsApiTeamName("cfb", "Michigan Wolverines", known)).toBe("Michigan");
+  });
+
+  it("returns null for a CFB name with no matching prefix", () => {
+    const known = new Set(["Ohio State"]);
+    expect(resolveOddsApiTeamName("cfb", "Some FCS Team", known)).toBeNull();
   });
 });

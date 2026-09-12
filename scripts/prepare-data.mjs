@@ -96,11 +96,48 @@ const SCHEMA = ["gameId", "date", "season", "homeTeam", "awayTeam", "homeScore",
 /** Compact schema shared by both sports' market-odds files: [gameId, homeMoneyline, awayMoneyline] — real historical sportsbook prices for the Probability Model's backtest, replacing its synthetic -110-both-sides assumption wherever a real price is available. */
 const MARKET_ODDS_SCHEMA = ["gameId", "homeMoneyline", "awayMoneyline"];
 
+/**
+ * NFL-only situational/market context, straight from columns nflverse's
+ * games.csv already carries but the app previously ignored — verified
+ * against nflreadr's own data dictionary (data-raw/dictionary_schedules.csv)
+ * rather than guessed:
+ *   - spreadLine: positive = home favored by that many points, negative =
+ *     away favored. "Lines up with the result column" (home_score -
+ *     away_score) per nflreadr's own definition — home covers iff
+ *     result > spreadLine.
+ *   - totalLine/overOdds/underOdds: the closing total and its juice.
+ *   - awayRest/homeRest: days of rest each team is coming off of.
+ *   - divGame: 1 if both teams share a division.
+ *   - roof/surface/temp/wind: stadium conditions (temp/wind are null for
+ *     dome/closed-roof games — nflverse leaves them blank, not zero).
+ *   - awayQbName/homeQbName: starting QB names, for cross-checking against
+ *     the season's passing-usage leader (see playerRankings.ts) to catch a
+ *     backup start.
+ * Compact schema: [gameId, spreadLine, totalLine, overOdds, underOdds,
+ * awayRest, homeRest, divGame, roof, surface, temp, wind, awayQbName, homeQbName]
+ */
+const NFL_CONTEXT_SCHEMA = [
+  "gameId",
+  "spreadLine",
+  "totalLine",
+  "overOdds",
+  "underOdds",
+  "awayRest",
+  "homeRest",
+  "divGame",
+  "roof",
+  "surface",
+  "temp",
+  "wind",
+  "awayQbName",
+  "homeQbName",
+];
+
 async function prepareNfl() {
   console.log("Fetching NFL games...");
   const rows = await fetchCsv("https://raw.githubusercontent.com/nflverse/nfldata/master/data/games.csv");
-  const games = rows
-    .filter((r) => isNum(r.home_score) && isNum(r.away_score) && r.gameday)
+  const completed = rows.filter((r) => isNum(r.home_score) && isNum(r.away_score) && r.gameday);
+  const games = completed
     .map((r) => [
       r.game_id,
       r.gameday,
@@ -121,7 +158,31 @@ async function prepareNfl() {
     .map((r) => [r.game_id, Number(r.home_moneyline), Number(r.away_moneyline)]);
   console.log(`  ${marketOddsRows.length} completed games with a real historical moneyline`);
 
-  return { schema: SCHEMA, games, marketOdds: { schema: MARKET_ODDS_SCHEMA, rows: marketOddsRows } };
+  const numOrNull = (v) => (isNum(v) ? Number(v) : null);
+  const contextRows = completed.map((r) => [
+    r.game_id,
+    numOrNull(r.spread_line),
+    numOrNull(r.total_line),
+    numOrNull(r.over_odds),
+    numOrNull(r.under_odds),
+    numOrNull(r.away_rest),
+    numOrNull(r.home_rest),
+    r.div_game === "1",
+    r.roof || null,
+    r.surface || null,
+    numOrNull(r.temp),
+    numOrNull(r.wind),
+    r.away_qb_name || null,
+    r.home_qb_name || null,
+  ]);
+  console.log(`  ${contextRows.filter((r) => r[1] !== null).length} completed games with a real historical spread line`);
+
+  return {
+    schema: SCHEMA,
+    games,
+    marketOdds: { schema: MARKET_ODDS_SCHEMA, rows: marketOddsRows },
+    context: { schema: NFL_CONTEXT_SCHEMA, rows: contextRows },
+  };
 }
 
 /**
@@ -198,9 +259,19 @@ async function prepareNflPlayerUsage(seasons) {
 // one (including already-played games from the current week).
 const CFB_SEASONS = Array.from({ length: 2026 - 2001 + 1 }, (_, i) => 2001 + i);
 
+/**
+ * CFB-only situational context, from cfb_schedules' own columns: conference
+ * game flag (this schedule has no rest-days/weather columns, unlike NFL's
+ * games.csv) and cfbfastR's own pregame Elo — a free, independently-computed
+ * second opinion useful as a sanity check against this app's own Elo engine.
+ * Compact schema: [gameId, conferenceGame, homePregameElo, awayPregameElo]
+ */
+const CFB_CONTEXT_SCHEMA = ["gameId", "conferenceGame", "homePregameElo", "awayPregameElo"];
+
 async function prepareCfb() {
   console.log("Fetching CFB games...");
   const games = [];
+  const context = [];
   // Every FBS-vs-FBS completed game (gameId, teams, season) — a superset of
   // `games` restricted to the division ESPN's box-score endpoint is worth
   // backfilling for (see prepareCfbTeamStats). Kept separate from `games`
@@ -231,6 +302,14 @@ async function prepareCfb() {
         Number(r.away_points),
         r.neutral_site === "TRUE",
       ]);
+      if (r.game_id) {
+        context.push([
+          r.game_id,
+          r.conference_game === "TRUE",
+          isNum(r.home_pregame_elo) ? Number(r.home_pregame_elo) : null,
+          isNum(r.away_pregame_elo) ? Number(r.away_pregame_elo) : null,
+        ]);
+      }
       if (r.game_id && r.home_division === "fbs" && r.away_division === "fbs") {
         fbsGames.push({ gameId: r.game_id, season: Number(r.season), homeTeam: r.home_team, awayTeam: r.away_team });
       }
@@ -238,7 +317,7 @@ async function prepareCfb() {
   }
   games.sort((a, b) => (a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0));
   console.log(`  ${games.length} completed games (${fbsGames.length} FBS vs. FBS)`);
-  return { schema: SCHEMA, games, fbsGames };
+  return { schema: SCHEMA, games, fbsGames, context: { schema: CFB_CONTEXT_SCHEMA, rows: context } };
 }
 
 /** "Away Team@Home Team" -> { away, home }, or null if it's not that shape. */
@@ -306,6 +385,139 @@ async function prepareCfbMarketOdds() {
   }
   console.log(`  ${marketOddsRows.length} games with a real historical moneyline (both sides matched)`);
   return { schema: MARKET_ODDS_SCHEMA, rows: marketOddsRows };
+}
+
+/**
+ * Compact schema for CFB's historical spread/total lines: [gameId,
+ * homeSpread, homeSpreadOdds, awaySpreadOdds, openHomeSpread, totalLine,
+ * overOdds, underOdds, openTotalLine] — homeSpread follows the same sign
+ * convention as nflverse's spread_line (positive = home favored), even
+ * though the source file quotes each row as a standard sportsbook spread
+ * FOR whichever team `abbr` names (negative = that team favored) — a
+ * per-team row is converted to home's perspective (negated when abbr IS the
+ * home team, kept as-is when abbr is away — see prepareCfbSpreadTotalLines)
+ * before averaging across books, so it can be compared to nflverse's NFL
+ * data with the same formula downstream. Coverage is much better for totals
+ * than for spreads (see below).
+ */
+const CFB_MARKET_LINES_SCHEMA = [
+  "gameId",
+  "homeSpread",
+  "homeSpreadOdds",
+  "awaySpreadOdds",
+  "openHomeSpread",
+  "totalLine",
+  "overOdds",
+  "underOdds",
+  "openTotalLine",
+];
+
+/**
+ * Real historical CFB spread and total lines, from the same archive
+ * prepareCfbMarketOdds() already downloads for moneylines (fetched
+ * separately here since this is a one-off script, not worth the complexity
+ * of sharing the parsed rows across two async functions).
+ *
+ * Spread rows are keyed by team abbr, same as money_line — so they carry the
+ * same 2006-2019 "compressed sportsbook code" ambiguity described on
+ * prepareCfbMarketOdds(), and are dropped unless abbr exactly matches one of
+ * game_desc's two team names. Total rows are keyed by "over"/"under" instead
+ * of a team name, so they have NO such ambiguity and get far better
+ * historical coverage than spreads or moneylines.
+ */
+async function prepareCfbSpreadTotalLines() {
+  console.log("Fetching CFB historical spread/total lines...");
+  const url = "https://raw.githubusercontent.com/sportsdataverse/cfbfastR-data/main/betting/csv/cfb_line_odds.csv.gz";
+  let rows;
+  try {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`${res.status}`);
+    const gz = Buffer.from(await res.arrayBuffer());
+    const csvText = zlib.gunzipSync(gz).toString("utf-8");
+    rows = toObjects(parseCsv(csvText));
+  } catch (e) {
+    console.log(`  skipping (failed to fetch/parse: ${e})`);
+    return { schema: CFB_MARKET_LINES_SCHEMA, rows: [] };
+  }
+
+  const avg = () => ({ sum: 0, count: 0 });
+  const push = (bucket, v) => {
+    if (isNum(v)) {
+      bucket.sum += Number(v);
+      bucket.count += 1;
+    }
+  };
+  const mean = (bucket) => (bucket.count > 0 ? bucket.sum / bucket.count : null);
+
+  const byGame = new Map(); // gameId -> { homeSpread, homeSpreadOdds, awaySpreadOdds, openHomeSpread, total, overOdds, underOdds, openTotal }
+  const bucketsFor = (gameId) => {
+    let entry = byGame.get(gameId);
+    if (!entry) {
+      entry = {
+        homeSpread: avg(),
+        homeSpreadOdds: avg(),
+        awaySpreadOdds: avg(),
+        openHomeSpread: avg(),
+        total: avg(),
+        overOdds: avg(),
+        underOdds: avg(),
+        openTotal: avg(),
+      };
+      byGame.set(gameId, entry);
+    }
+    return entry;
+  };
+
+  for (const r of rows) {
+    if (!r.game_id) continue;
+    if (r.market_type === "spread") {
+      const desc = parseGameDesc(r.game_desc);
+      if (!desc) continue;
+      const abbr = (r.abbr ?? "").trim().toLowerCase();
+      let isHome;
+      if (abbr === desc.home.toLowerCase()) isHome = true;
+      else if (abbr === desc.away.toLowerCase()) isHome = false;
+      else continue;
+      // Source convention (verified live against real 2022+ games, e.g.
+      // Miami(OH)@UAB: UAB/home quoted "-11", Miami(OH)/away quoted "+11"
+      // for the same game): `lines` is the standard sportsbook spread FOR
+      // the named team — negative means THAT team is favored. Negate the
+      // home-team row (home favored by 11 -> +11) and keep the away-team
+      // row as-is (away getting +11 also means home favored by 11) to land
+      // on nflverse's convention: homeSpread positive = home favored.
+      const toHomeSpread = isHome ? -1 : 1;
+      const b = bucketsFor(r.game_id);
+      if (isNum(r.lines)) push(b.homeSpread, toHomeSpread * Number(r.lines));
+      if (isNum(r.opening_lines)) push(b.openHomeSpread, toHomeSpread * Number(r.opening_lines));
+      push(isHome ? b.homeSpreadOdds : b.awaySpreadOdds, r.odds);
+    } else if (r.market_type === "total") {
+      const abbr = (r.abbr ?? "").trim().toLowerCase();
+      if (abbr !== "over" && abbr !== "under") continue;
+      const b = bucketsFor(r.game_id);
+      push(b.total, r.lines);
+      push(b.openTotal, r.opening_lines);
+      push(abbr === "over" ? b.overOdds : b.underOdds, r.odds);
+    }
+  }
+
+  const marketLinesRows = [];
+  for (const [gameId, b] of byGame) {
+    marketLinesRows.push([
+      gameId,
+      mean(b.homeSpread),
+      mean(b.homeSpreadOdds),
+      mean(b.awaySpreadOdds),
+      mean(b.openHomeSpread),
+      mean(b.total),
+      mean(b.overOdds),
+      mean(b.underOdds),
+      mean(b.openTotal),
+    ]);
+  }
+  console.log(
+    `  ${marketLinesRows.length} games with a spread and/or total (${marketLinesRows.filter((r) => r[1] !== null).length} with spread, ${marketLinesRows.filter((r) => r[5] !== null).length} with total)`,
+  );
+  return { schema: CFB_MARKET_LINES_SCHEMA, rows: marketLinesRows };
 }
 
 /**
@@ -534,6 +746,74 @@ async function fetchCfbGameBoxScore(gameId, homeTeam, awayTeam) {
 const CFB_TEAM_STATS_MIN_SEASON = 2018;
 
 /**
+ * Real, currently-maintained CFB EPA — CollegeFootballData.com calls it
+ * "PPA" (Predicted Points Added), the same concept nflverse calls EPA.
+ * Closes a gap that's existed since this pipeline's first CFB pass:
+ * cfbfastR's own play-by-play archive (the obvious first choice) turned out
+ * to be abandoned after the 2021 season — verified live, its parquet
+ * releases stop at play_by_play_2021.parquet — so CFB's offEpa has been
+ * hardcoded to 0 ever since. CFBD is the actual upstream source cfbfastR
+ * itself wraps, and its `gameId`/`team` fields are confirmed (checked
+ * against real rows) to already exactly match cfb-games.json's own
+ * ESPN-event-id gameIds and team-name strings — no translation needed,
+ * unlike most other CFB-side joins in this script. One request per season
+ * covers every week, so the whole archive costs under a dozen requests.
+ *
+ * Requires a free CollegeFootballData.com API key in CFBD_API_KEY — skips
+ * gracefully (offEpa stays 0, exactly like before) if it isn't set.
+ */
+async function fetchCfbEpaBySeason(seasons) {
+  const apiKey = process.env.CFBD_API_KEY;
+  if (!apiKey) {
+    console.log("CFBD_API_KEY not set — skipping real CFB EPA (offEpa stays 0)");
+    return new Map();
+  }
+  console.log("Fetching CFB EPA (CollegeFootballData.com PPA)...");
+  const epaByGameTeam = new Map(); // `${gameId}|${team}` -> offense.overall PPA
+  for (const season of seasons) {
+    let rows;
+    try {
+      const res = await fetch(`https://api.collegefootballdata.com/ppa/games?year=${season}`, {
+        headers: { Authorization: `Bearer ${apiKey}` },
+      });
+      if (!res.ok) throw new Error(`${res.status}`);
+      rows = await res.json();
+    } catch (e) {
+      console.log(`  skipping ${season} (failed to fetch: ${e})`);
+      continue;
+    }
+    for (const r of rows) {
+      if (!r.gameId || !r.team || typeof r.offense?.overall !== "number") continue;
+      epaByGameTeam.set(`${r.gameId}|${r.team}`, r.offense.overall);
+    }
+  }
+  console.log(`  ${epaByGameTeam.size} team-games with real EPA`);
+  return epaByGameTeam;
+}
+
+/**
+ * Rewrites TEAM_STAT_SCHEMA's offEpa field using real values where
+ * available. Applied as a POST-PROCESSING overlay rather than woven into
+ * fetchCfbGameBoxScore itself, because prepareCfbBoxScoreData's own
+ * incremental-refetch logic only touches games missing from the existing
+ * archive — every already-cached historical row would otherwise stay stuck
+ * at offEpa=0 forever. An overlay rewrites every row this covers, cached or
+ * freshly fetched alike, every run (cheap: a plain map lookup, no network).
+ */
+function applyCfbEpaOverlay(teamStatsRows, epaByGameTeam) {
+  if (epaByGameTeam.size === 0) return teamStatsRows;
+  let applied = 0;
+  const rows = teamStatsRows.map(([gameId, team, totalYards, turnoverMargin, offEpa]) => {
+    const real = epaByGameTeam.get(`${gameId}|${team}`);
+    if (real === undefined) return [gameId, team, totalYards, turnoverMargin, offEpa];
+    applied++;
+    return [gameId, team, totalYards, turnoverMargin, Number(real.toFixed(3))];
+  });
+  console.log(`  applied real EPA to ${applied}/${rows.length} CFB team-game rows`);
+  return rows;
+}
+
+/**
  * Backfills both team-box-score stats and per-team player-usage leaders from
  * one pass of ESPN fetches. Driven by player-usage coverage (the newer,
  * incomplete dataset) rather than team-stats coverage, so a game already
@@ -583,11 +863,13 @@ async function readExistingRows(filename) {
 async function main() {
   await mkdir(OUT_DIR, { recursive: true });
 
-  const { schema: nflSchema, games: nflGames, marketOdds: nflMarketOdds } = await prepareNfl();
+  const { schema: nflSchema, games: nflGames, marketOdds: nflMarketOdds, context: nflContext } = await prepareNfl();
   await writeFile(path.join(OUT_DIR, "nfl-games.json"), JSON.stringify({ schema: nflSchema, games: nflGames }));
   console.log(`Wrote public/data/nfl-games.json`);
   await writeFile(path.join(OUT_DIR, "nfl-market-odds.json"), JSON.stringify(nflMarketOdds));
   console.log(`Wrote public/data/nfl-market-odds.json`);
+  await writeFile(path.join(OUT_DIR, "nfl-game-context.json"), JSON.stringify(nflContext));
+  console.log(`Wrote public/data/nfl-game-context.json`);
 
   const nflSeasons = [...new Set(nflGames.map((g) => g[2]))].sort((a, b) => a - b);
   const nflTeamStats = await prepareNflTeamStats(nflSeasons);
@@ -598,9 +880,11 @@ async function main() {
   await writeFile(path.join(OUT_DIR, "nfl-player-usage.json"), JSON.stringify(nflPlayerUsage));
   console.log(`Wrote public/data/nfl-player-usage.json`);
 
-  const { schema, games, fbsGames } = await prepareCfb();
+  const { schema, games, fbsGames, context: cfbContext } = await prepareCfb();
   await writeFile(path.join(OUT_DIR, "cfb-games.json"), JSON.stringify({ schema, games }));
   console.log(`Wrote public/data/cfb-games.json`);
+  await writeFile(path.join(OUT_DIR, "cfb-game-context.json"), JSON.stringify(cfbContext));
+  console.log(`Wrote public/data/cfb-game-context.json`);
 
   const existingCfbTeamStatRows = await readExistingRows("cfb-team-stats.json");
   const existingCfbPlayerUsageRows = await readExistingRows("cfb-player-usage.json");
@@ -609,6 +893,9 @@ async function main() {
     existingCfbTeamStatRows,
     existingCfbPlayerUsageRows,
   );
+  const cfbSeasons = [...new Set(fbsGames.filter((g) => g.season >= CFB_TEAM_STATS_MIN_SEASON).map((g) => g.season))].sort((a, b) => a - b);
+  const cfbEpaByGameTeam = await fetchCfbEpaBySeason(cfbSeasons);
+  cfbTeamStats.rows = applyCfbEpaOverlay(cfbTeamStats.rows, cfbEpaByGameTeam);
   await writeFile(path.join(OUT_DIR, "cfb-team-stats.json"), JSON.stringify(cfbTeamStats));
   console.log(`Wrote public/data/cfb-team-stats.json`);
   await writeFile(path.join(OUT_DIR, "cfb-player-usage.json"), JSON.stringify(cfbPlayerUsage));
@@ -617,6 +904,10 @@ async function main() {
   const cfbMarketOdds = await prepareCfbMarketOdds();
   await writeFile(path.join(OUT_DIR, "cfb-market-odds.json"), JSON.stringify(cfbMarketOdds));
   console.log(`Wrote public/data/cfb-market-odds.json`);
+
+  const cfbMarketLines = await prepareCfbSpreadTotalLines();
+  await writeFile(path.join(OUT_DIR, "cfb-market-lines.json"), JSON.stringify(cfbMarketLines));
+  console.log(`Wrote public/data/cfb-market-lines.json`);
 }
 
 main().catch((err) => {

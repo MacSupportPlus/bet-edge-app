@@ -6,9 +6,10 @@ import { Sport } from "@/lib/espn";
 import { loadGames } from "@/lib/loadGames";
 import { computeRankings, TeamRankingRow } from "@/lib/rankings";
 import { SPORT_ELO_OPTIONS, SPORT_LABELS } from "@/lib/sportConfig";
+import { computeSrs } from "@/lib/srs";
 import { loadTeamStats, TeamGameStat } from "@/lib/teamStats";
 
-type SortKey = "elo" | "change" | "record" | "ppg" | "offRating" | "defRating" | "yards" | "turnover" | "epa";
+type SortKey = "elo" | "srs" | "change" | "record" | "ppg" | "offRating" | "defRating" | "yards" | "turnover" | "epa";
 
 const OTHER_SPORT: Record<Sport, Sport> = { cfb: "nfl", nfl: "cfb" };
 
@@ -56,7 +57,12 @@ export function RankingsPage({ sport }: { sport: Sport }) {
     const bestOffenses = [...ranked.rows].sort((a, b) => b.offenseRating - a.offenseRating).slice(0, 5);
     const bestDefenses = [...ranked.rows].sort((a, b) => b.defenseRating - a.defenseRating).slice(0, 5);
 
-    return { ...ranked, risers, fallers, bestOffenses, bestDefenses };
+    // SRS: a free, margin-based second opinion alongside Elo — see srs.ts.
+    // Retrospective only (not walk-forward), so it's shown for context, not
+    // fed into the win-probability model.
+    const srsByTeam = computeSrs(games, ranked.currentSeason);
+
+    return { ...ranked, risers, fallers, bestOffenses, bestDefenses, srsByTeam };
   }, [games, teamGameStats, sport]);
 
   const [sortKey, setSortKey] = useState<SortKey>("elo");
@@ -77,6 +83,8 @@ export function RankingsPage({ sport }: { sport: Sport }) {
       switch (sortKey) {
         case "elo":
           return r.elo;
+        case "srs":
+          return analysis.srsByTeam.get(r.team) ?? -Infinity;
         case "change":
           return r.change ?? -Infinity;
         case "record":
@@ -101,6 +109,7 @@ export function RankingsPage({ sport }: { sport: Sport }) {
 
   const columns: { key: SortKey; label: string; show: boolean }[] = [
     { key: "elo", label: "Elo", show: true },
+    { key: "srs", label: "SRS", show: true },
     { key: "change", label: "Δ Season", show: true },
     { key: "record", label: "Record", show: true },
     { key: "ppg", label: "PPG", show: true },
@@ -271,6 +280,9 @@ export function RankingsPage({ sport }: { sport: Sport }) {
                     <td className="px-3 py-1.5 text-right tabular-nums" style={{ color: "var(--text-primary)" }}>
                       {r.elo.toFixed(0)}
                     </td>
+                    <td className="px-3 py-1.5 text-right tabular-nums" style={{ color: "var(--text-secondary)" }}>
+                      {fmtSigned(analysis.srsByTeam.get(r.team) ?? 0, 1)}
+                    </td>
                     <td
                       className="px-3 py-1.5 text-right tabular-nums"
                       style={{ color: r.change === null ? "var(--text-muted)" : r.change >= 0 ? "var(--status-good)" : "var(--status-critical)" }}
@@ -331,7 +343,9 @@ export function RankingsPage({ sport }: { sport: Sport }) {
             scored/allowed per game — each team&apos;s output compared to what an average team would do against
             the same strength of opponent (bucketed into thirds by opponent Elo, league-wide), not just a raw
             per-game average, so padding stats against weak teams doesn&apos;t look the same as doing it against
-            strong ones. Click any column to sort by it.
+            strong ones. <strong style={{ color: "var(--text-secondary)" }}>SRS</strong> is a second, independent
+            rating (margin-of-victory only, no home-field adjustment, not fed into the model) — when it and Elo
+            disagree on a team, that disagreement itself is useful information. Click any column to sort by it.
           </p>
 
           <Link

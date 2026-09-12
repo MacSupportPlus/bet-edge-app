@@ -55,6 +55,11 @@ describe("realizedPath", () => {
     expect(path.map((p) => p.bankroll)).toEqual([1000, 1100, 1050]);
   });
 
+  it("refunds a push's stake with zero net profit, unlike a loss", () => {
+    const bets = [bet({ id: "pu", date: "2026-01-01", stake: 100, b: 2, outcome: "push" })];
+    expect(realizedPath(1000, bets)[1].bankroll).toBe(1000);
+  });
+
   it("ignores pending bets entirely", () => {
     const bets = [
       bet({ id: "w", date: "2026-01-01", stake: 100, outcome: "win" }),
@@ -120,6 +125,19 @@ describe("summarizeBankroll", () => {
     expect(summary.settledCount).toBe(2);
     expect(summary.pendingCount).toBe(1);
     expect(summary.winRate).toBeCloseTo(0.5, 10);
+  });
+
+  it("excludes pushes from both sides of the win-rate ratio, but still counts stake/settled/pending", () => {
+    const bets = [
+      bet({ id: "w", date: "2026-01-01", stake: 100, b: 1, outcome: "win" }),
+      bet({ id: "l", date: "2026-01-02", stake: 50, outcome: "loss" }),
+      bet({ id: "pu", date: "2026-01-03", stake: 75, outcome: "push" }),
+    ];
+    const summary = summarizeBankroll(1000, bets);
+    expect(summary.winRate).toBeCloseTo(0.5, 10); // 1 win / (1 win + 1 loss), push excluded
+    expect(summary.settledCount).toBe(3); // push counts as settled, not pending
+    expect(summary.totalStaked).toBe(225); // push's stake still counted as put into action
+    expect(summary.totalProfit).toBe(50); // push contributes 0
   });
 
   it("defaults sensibly with no bets logged", () => {

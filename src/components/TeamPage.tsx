@@ -6,18 +6,23 @@ import Link from "next/link";
 import { BetEntry, summarizeBankroll } from "@/lib/bankroll";
 import { Game, runElo } from "@/lib/elo";
 import { fetchOddsForGames, fetchUpcomingGames, GameOdds, Sport, UpcomingGame } from "@/lib/espn";
+import { NflGameContext, loadNflGameContext } from "@/lib/gameContext";
 import { loadGames } from "@/lib/loadGames";
 import { predictProba, trainLogisticRegression } from "@/lib/logisticRegression";
+import { buildFeatureVector } from "@/lib/modelFeatures";
 import { formatMoneyline } from "@/lib/odds";
 import { formatStatLine, loadPlayerUsage, primaryStarter, PlayerUsageRow, UsageCategory, USAGE_CATEGORY_LABELS } from "@/lib/playerUsage";
+import { buildQbValueModel, qbValueDiff } from "@/lib/qbValue";
 import { computeRankings } from "@/lib/rankings";
+import { computeSrs } from "@/lib/srs";
 import { seasonAverage, teamStatTrend } from "@/lib/research";
 import { classifyPick, pickSide } from "@/lib/scanner";
 import { fitMarginModel, predictMargin, predictTotal, seasonScoringAverage } from "@/lib/spreadModel";
 import { SCHEDULE_LOOKAHEAD_DAYS, SPORT_ELO_OPTIONS, SPORT_LABELS } from "@/lib/sportConfig";
 import { matchKeyFor, matchTeamName } from "@/lib/teamMatch";
-import { computeTeamStatDiffs, loadTeamStats, NEUTRAL_TEAM_STAT_FEATURES, TeamGameStat } from "@/lib/teamStats";
+import { computeTeamStatDiffs, loadTeamStats, TeamGameStat } from "@/lib/teamStats";
 import { useLocalStorageState } from "@/lib/useLocalStorageState";
+import { FavoriteStar } from "./FavoriteStar";
 import { LineChart } from "./LineChart";
 import { StatTile } from "./StatTile";
 import { TeamAutocomplete } from "./TeamAutocomplete";
@@ -55,6 +60,7 @@ interface Snapshot {
   games: Game[];
   teamGameStats: TeamGameStat[] | null;
   playerUsage: PlayerUsageRow[];
+  gameContext: Map<string, NflGameContext> | null;
   upcomingGames: UpcomingGame[];
   oddsByEspnId: Map<string, GameOdds | null>;
   error: string | null;
@@ -79,10 +85,12 @@ export function TeamPage() {
     let cancelled = false;
     (async () => {
       try {
-        const [games, teamGameStats, playerUsage, schedule] = await Promise.all([
+        const gameContextPromise = sport === "nfl" ? loadNflGameContext() : Promise.resolve(new Map<string, NflGameContext>());
+        const [games, teamGameStats, playerUsage, gameContext, schedule] = await Promise.all([
           loadGames(sport),
           loadTeamStats(sport),
           loadPlayerUsage(sport),
+          gameContextPromise,
           fetchUpcomingGames(sport, SCHEDULE_LOOKAHEAD_DAYS[sport]),
         ]);
         const upcomingGames = schedule.games.filter((g) => {
@@ -91,10 +99,19 @@ export function TeamPage() {
           return home === team || away === team;
         });
         const oddsByEspnId = await fetchOddsForGames(sport, upcomingGames.map((g) => g.espnId));
-        if (!cancelled) setSnapshot({ sport, games, teamGameStats, playerUsage, upcomingGames, oddsByEspnId, error: null });
+        if (!cancelled) setSnapshot({ sport, games, teamGameStats, playerUsage, gameContext, upcomingGames, oddsByEspnId, error: null });
       } catch (e) {
         if (!cancelled)
-          setSnapshot({ sport, games: [], teamGameStats: null, playerUsage: [], upcomingGames: [], oddsByEspnId: new Map(), error: String(e) });
+          setSnapshot({
+            sport,
+            games: [],
+            teamGameStats: null,
+            playerUsage: [],
+            gameContext: null,
+            upcomingGames: [],
+            oddsByEspnId: new Map(),
+            error: String(e),
+          });
       }
     })();
     return () => {
@@ -106,7 +123,7 @@ export function TeamPage() {
 
   const analysis = useMemo(() => {
     if (!snapshot || snapshot.sport !== sport || !team) return null;
-    const { games, teamGameStats, playerUsage, upcomingGames, oddsByEspnId } = snapshot;
+    const { games, teamGameStats, playerUsage, gameContext, upcomingGames, oddsByEspnId } = snapshot;
 
     const eloOptions = SPORT_ELO_OPTIONS[sport];
     const { records, finalRatings, ratingHistory } = runElo(games, eloOptions);
@@ -115,13 +132,22 @@ export function TeamPage() {
 
     const statDiffs = teamGameStats ? computeTeamStatDiffs(games, teamGameStats) : new Map();
     const hasTeamStats = statDiffs.size > 0;
-    const statFeaturesFor = (r: { gameId?: string }) => (r.gameId && statDiffs.get(r.gameId)) || NEUTRAL_TEAM_STAT_FEATURES;
-    const featuresFor = (r: (typeof records)[number]) => {
-      const base = [r.eloDiff];
-      if (!hasTeamStats) return base;
-      const f = statFeaturesFor(r);
-      return [...base, f.totalYardsDiff, f.turnoverMarginDiff, f.offEpaDiff];
+
+    // Starting-QB value (walk-forward, no-leakage) — validated by held-out
+    // Brier-score backtesting (see qbValue.ts) before being wired in. NFL-only.
+    const qbModel = sport === "nfl" ? buildQbValueModel(games, playerUsage) : null;
+    const hasQbValue = sport === "nfl" && !!gameContext && gameContext.size > 0 && !!qbModel;
+    const qbValueForRecord = (r: { gameId?: string; date: string }) => {
+      if (!qbModel || !r.gameId || !gameContext) return null;
+      const ctx = gameContext.get(r.gameId);
+      return ctx ? qbValueDiff(qbModel, ctx.homeQbName, ctx.awayQbName, r.date) : null;
     };
+    const featuresFor = (r: (typeof records)[number]) =>
+      buildFeatureVector(
+        { eloDiff: r.eloDiff, teamStats: r.gameId ? (statDiffs.get(r.gameId) ?? null) : null, qbValue: qbValueForRecord(r) },
+        hasTeamStats,
+        hasQbValue,
+      );
     const model = trainLogisticRegression(
       records.map(featuresFor),
       records.map((r) => r.homeWin),
@@ -173,21 +199,30 @@ export function TeamPage() {
       const oppElo = finalRatings.get(matchedOpponent) ?? eloOptions.initialRating;
       const homeAdv = game.neutralSite ? 0 : eloOptions.homeAdvantage;
       const eloDiff = isHome ? teamElo + homeAdv - oppElo : oppElo + homeAdv - teamElo;
-      let features = [eloDiff];
-      if (hasTeamStats) {
-        const oppAvg = seasonAverage(teamStatTrend(games, teamGameStats!, matchedOpponent), currentSeason);
-        const f =
-          teamSeasonAvg && oppAvg
-            ? {
-                totalYardsDiff: isHome ? teamSeasonAvg.totalYards - oppAvg.totalYards : oppAvg.totalYards - teamSeasonAvg.totalYards,
-                turnoverMarginDiff: isHome
-                  ? teamSeasonAvg.turnoverMargin - oppAvg.turnoverMargin
-                  : oppAvg.turnoverMargin - teamSeasonAvg.turnoverMargin,
-                offEpaDiff: isHome ? teamSeasonAvg.offEpa - oppAvg.offEpa : oppAvg.offEpa - teamSeasonAvg.offEpa,
-              }
-            : NEUTRAL_TEAM_STAT_FEATURES;
-        features = [eloDiff, f.totalYardsDiff, f.turnoverMarginDiff, f.offEpaDiff];
-      }
+      const oppAvg = hasTeamStats ? seasonAverage(teamStatTrend(games, teamGameStats!, matchedOpponent), currentSeason) : null;
+      const teamStatsFeatures =
+        teamSeasonAvg && oppAvg
+          ? {
+              totalYardsDiff: isHome ? teamSeasonAvg.totalYards - oppAvg.totalYards : oppAvg.totalYards - teamSeasonAvg.totalYards,
+              turnoverMarginDiff: isHome
+                ? teamSeasonAvg.turnoverMargin - oppAvg.turnoverMargin
+                : oppAvg.turnoverMargin - teamSeasonAvg.turnoverMargin,
+              offEpaDiff: isHome ? teamSeasonAvg.offEpa - oppAvg.offEpa : oppAvg.offEpa - teamSeasonAvg.offEpa,
+            }
+          : null;
+      // Presumed current starters (this season's passing-usage leader) for
+      // whichever side is actually home/away in this specific game, valued as
+      // of today — matches eloDiff's/teamStatsFeatures' true home-minus-away
+      // convention regardless of whether `team` itself is home or away.
+      const liveQbValue = hasQbValue
+        ? qbValueDiff(
+            qbModel!,
+            primaryStarter(playerUsage, games, isHome ? team : matchedOpponent, "passing", currentSeason)?.player ?? null,
+            primaryStarter(playerUsage, games, isHome ? matchedOpponent : team, "passing", currentSeason)?.player ?? null,
+            new Date().toISOString().slice(0, 10),
+          )
+        : null;
+      const features = buildFeatureVector({ eloDiff, teamStats: teamStatsFeatures, qbValue: liveQbValue }, hasTeamStats, hasQbValue);
       const pHomeSide = predictProba(model, features);
       const pTeam = isHome ? pHomeSide : 1 - pHomeSide;
 
@@ -214,9 +249,11 @@ export function TeamPage() {
     const ranked = computeRankings(sport, games, teamGameStats, eloOptions);
     const rankIndex = ranked?.rows.findIndex((r) => r.team === team) ?? -1;
     const rankedRow = rankIndex >= 0 ? ranked!.rows[rankIndex] : null;
+    const srs = computeSrs(games, currentSeason).get(team) ?? null;
 
     return {
       currentElo: finalRatings.get(team) ?? eloOptions.initialRating,
+      srs,
       hasTeamStats,
       recent: [...history].reverse().slice(0, RECENT_GAMES_SHOWN),
       statTrend,
@@ -313,9 +350,12 @@ export function TeamPage() {
         <Link href="/team" className="text-xs underline" style={{ color: "var(--text-muted)" }}>
           ← Choose a different team
         </Link>
-        <h1 className="mt-1 text-2xl font-semibold" style={{ color: "var(--text-primary)" }}>
-          {team}
-        </h1>
+        <div className="mt-1 flex items-center gap-2">
+          <h1 className="text-2xl font-semibold" style={{ color: "var(--text-primary)" }}>
+            {team}
+          </h1>
+          <FavoriteStar kind="team" sport={sport} team={team} />
+        </div>
         <p className="mt-1 text-sm" style={{ color: "var(--text-secondary)" }}>
           {SPORT_LABELS[sport]} — rating trend, recent form, and what the model thinks about their
           next games, all in one place.
@@ -347,6 +387,11 @@ export function TeamPage() {
               label="Rank"
               value={analysis.rank ? `#${analysis.rank}` : "—"}
               sub={analysis.rank ? `of ${analysis.rankOf} this season` : "no games yet this season"}
+            />
+            <StatTile
+              label="SRS"
+              value={analysis.srs !== null ? fmtSignedRating(analysis.srs) : "—"}
+              sub="second opinion (margin-based, no model input)"
             />
             <StatTile label="Last 5" value={analysis.recent.slice(-5).map((g) => g.result).join("-") || "—"} sub="most recent first" />
             {analysis.offenseRating !== null && (

@@ -11,7 +11,10 @@
 
 import { recommendedStake } from "./edge";
 
-export type BetOutcome = "pending" | "win" | "loss";
+export type BetOutcome = "pending" | "win" | "loss" | "push";
+
+export type BetType = "moneyline" | "spread" | "total";
+export type BetSide = "home" | "away" | "over" | "under";
 
 export interface BetEntry {
   id: string;
@@ -23,6 +26,21 @@ export interface BetEntry {
   outcome: BetOutcome;
   /** True if this bet's outcome was set by autoGradeBets.ts rather than a manual Win/Loss click. */
   settledAuto?: boolean;
+  /**
+   * Structured fields for auto-settling spread/total bets — optional and
+   * absent for older/manually-typed bets, which stay settleable only via
+   * the free-text moneyline format autoGradeBets.ts already parses out of
+   * `description`. All four are required together for a spread/total bet
+   * to be auto-gradeable; homeTeam/awayTeam let settlement look the game up
+   * directly instead of re-parsing it out of `description`.
+   */
+  betType?: BetType;
+  /** The line at bet time — spread points (home-favored convention, see gameContext.ts) or total points. */
+  line?: number;
+  /** "home"/"away" for a spread bet, "over"/"under" for a total bet. */
+  side?: BetSide;
+  homeTeam?: string;
+  awayTeam?: string;
 }
 
 export interface BankrollPoint {
@@ -48,6 +66,7 @@ export function settledInOrder(bets: BetEntry[]): BetEntry[] {
     .map(({ bet }) => bet);
 }
 
+/** A push refunds the stake — net profit 0, same as never having bet (unlike a loss). */
 function betProfit(bet: BetEntry, stake: number): number {
   if (bet.outcome === "win") return stake * bet.b;
   if (bet.outcome === "loss") return -stake;
@@ -113,6 +132,7 @@ export function summarizeBankroll(startingBankroll: number, bets: BetEntry[]): B
   const dd = drawdownSeries(path);
   const settled = bets.filter((b) => b.outcome !== "pending");
   const wins = settled.filter((b) => b.outcome === "win").length;
+  const losses = settled.filter((b) => b.outcome === "loss").length;
   const currentBankroll = path[path.length - 1].bankroll;
 
   return {
@@ -121,7 +141,8 @@ export function summarizeBankroll(startingBankroll: number, bets: BetEntry[]): B
     totalProfit: currentBankroll - startingBankroll,
     settledCount: settled.length,
     pendingCount: bets.length - settled.length,
-    winRate: settled.length > 0 ? wins / settled.length : 0,
+    // Pushes are excluded from both sides of this ratio — a push is neutral, not a loss.
+    winRate: wins + losses > 0 ? wins / (wins + losses) : 0,
     currentDrawdown: dd[dd.length - 1].drawdown,
     maxDrawdown: Math.max(0, ...dd.map((d) => d.drawdown)),
   };

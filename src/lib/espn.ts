@@ -32,6 +32,9 @@ export interface UpcomingGame {
   /** ESPN's "abbreviation" field, e.g. "SEA" — NFL's dataset match key (see ESPN_TEAM_ALIASES); unused for CFB. */
   homeTeamAbbr: string | null;
   awayTeamAbbr: string | null;
+  /** ESPN's "displayName" field, e.g. "Seattle Seahawks" / "Ohio State Buckeyes" — verified live to match The Odds API's own team-name convention exactly for both sports, so this is the join key against live odds/props (see oddsApi.ts), not homeTeamAbbr/homeTeam. */
+  homeTeamDisplayName: string | null;
+  awayTeamDisplayName: string | null;
   homeTeamId: string | null;
   awayTeamId: string | null;
   neutralSite: boolean;
@@ -50,6 +53,10 @@ export interface GameOdds {
   homeMoneyline: number | null;
   awayMoneyline: number | null;
   spread: number | null;
+  /** The game total (over/under line) — same pickcenter entry as spread/moneyline, just previously left unparsed. */
+  total: number | null;
+  overOdds: number | null;
+  underOdds: number | null;
 }
 
 /** American moneyline -> net decimal odds (b), e.g. +150 -> 1.5, -150 -> 0.667. */
@@ -73,7 +80,7 @@ export function toEspnDate(d: Date): string {
 
 interface EspnCompetitor {
   homeAway: string;
-  team?: { id?: string; location?: string; abbreviation?: string };
+  team?: { id?: string; location?: string; abbreviation?: string; displayName?: string };
 }
 
 interface EspnScoreboardEvent {
@@ -96,6 +103,8 @@ export function parseScoreboardEvent(event: unknown): UpcomingGame | null {
     awayTeam: away.team.location,
     homeTeamAbbr: home.team.abbreviation ?? null,
     awayTeamAbbr: away.team.abbreviation ?? null,
+    homeTeamDisplayName: home.team.displayName ?? null,
+    awayTeamDisplayName: away.team.displayName ?? null,
     homeTeamId: home.team.id ?? null,
     awayTeamId: away.team.id ?? null,
     neutralSite: Boolean(comp?.neutralSite),
@@ -107,10 +116,29 @@ interface EspnPickcenterEntry {
   homeTeamOdds?: { moneyLine?: number };
   awayTeamOdds?: { moneyLine?: number };
   spread?: number;
+  overUnder?: number;
+  overOdds?: number;
+  underOdds?: number;
+}
+
+interface EspnInjuryAthlete {
+  displayName?: string;
+  position?: { abbreviation?: string };
+}
+
+interface EspnInjuryItem {
+  status?: string;
+  athlete?: EspnInjuryAthlete;
+}
+
+interface EspnInjuryTeamBlock {
+  team?: { displayName?: string };
+  injuries?: EspnInjuryItem[];
 }
 
 interface EspnSummary {
   pickcenter?: EspnPickcenterEntry[];
+  injuries?: EspnInjuryTeamBlock[];
 }
 
 export function parseOddsSummary(summary: unknown): GameOdds | null {
@@ -124,7 +152,50 @@ export function parseOddsSummary(summary: unknown): GameOdds | null {
     homeMoneyline: typeof home === "number" ? home : null,
     awayMoneyline: typeof away === "number" ? away : null,
     spread: typeof entry.spread === "number" ? entry.spread : null,
+    total: typeof entry.overUnder === "number" ? entry.overUnder : null,
+    overOdds: typeof entry.overOdds === "number" ? entry.overOdds : null,
+    underOdds: typeof entry.underOdds === "number" ? entry.underOdds : null,
   };
+}
+
+export interface PlayerInjury {
+  team: string;
+  player: string;
+  position: string | null;
+  /** ESPN's own status label, e.g. "Questionable", "Doubtful", "Out", "Injured Reserve". */
+  status: string;
+}
+
+/**
+ * Both teams' injury reports from the same game-summary response already
+ * fetched for odds (`summary.injuries`) — no extra request needed. Verified
+ * live against real 2026-season data; ESPN's separately-documented
+ * `againstTheSpread` field on this same endpoint was checked too but came
+ * back empty on every completed game tried, so it isn't parsed here.
+ */
+/** Statuses severe enough to treat "this player probably won't play" as the working assumption. Deliberately excludes Questionable/Probable/Day-To-Day — those players usually do play, and treating every questionable tag as an automatic backup swap would be wrong more often than right. */
+const LIKELY_OUT_STATUSES = new Set(["Out", "Doubtful", "Injured Reserve", "IR", "Suspended", "PUP"]);
+
+export function isLikelyOut(status: string): boolean {
+  return LIKELY_OUT_STATUSES.has(status);
+}
+
+export function parseInjuries(summary: unknown): PlayerInjury[] {
+  if (typeof summary !== "object" || summary === null) return [];
+  const blocks = (summary as Partial<EspnSummary>).injuries;
+  if (!Array.isArray(blocks)) return [];
+  const out: PlayerInjury[] = [];
+  for (const block of blocks) {
+    const team = block?.team?.displayName;
+    if (!team || !Array.isArray(block.injuries)) continue;
+    for (const item of block.injuries) {
+      const player = item?.athlete?.displayName;
+      const status = item?.status;
+      if (!player || !status) continue;
+      out.push({ team, player, position: item.athlete?.position?.abbreviation ?? null, status });
+    }
+  }
+  return out;
 }
 
 interface EspnStatEntry {
@@ -227,11 +298,21 @@ export async function fetchUpcomingGames(sport: Sport, daysAhead = 8): Promise<U
   return { games, currentWeek };
 }
 
-export async function fetchGameOdds(sport: Sport, espnId: string): Promise<GameOdds | null> {
+export interface GameSummary {
+  odds: GameOdds | null;
+  injuries: PlayerInjury[];
+}
+
+/** One fetch of ESPN's summary endpoint, shaped into both odds and injuries — avoids fetching the same URL twice when a caller wants both. */
+export async function fetchGameSummary(sport: Sport, espnId: string): Promise<GameSummary> {
   const res = await fetch(`${summaryUrl(sport)}?event=${espnId}`);
-  if (!res.ok) return null;
+  if (!res.ok) return { odds: null, injuries: [] };
   const data = await res.json();
-  return parseOddsSummary(data);
+  return { odds: parseOddsSummary(data), injuries: parseInjuries(data) };
+}
+
+export async function fetchGameOdds(sport: Sport, espnId: string): Promise<GameOdds | null> {
+  return (await fetchGameSummary(sport, espnId)).odds;
 }
 
 /** Fetches odds for many games without firing them all at ESPN at once. */

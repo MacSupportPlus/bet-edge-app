@@ -78,4 +78,69 @@ describe("autoGradeBets", () => {
     expect(result.gradedCount).toBe(0);
     expect(result.bets[0].outcome).toBe("pending");
   });
+
+  describe("structured spread/total bets", () => {
+    // Ohio State (home) beat Michigan 30-17: margin +13, total 47.
+
+    it("settles a home spread bet as a win when home covers", () => {
+      const bets = [bet({ id: "a", betType: "spread", line: 10, side: "home", homeTeam: "Ohio State", awayTeam: "Michigan" })];
+      const result = autoGradeBets(bets, cfbGames, []);
+      expect(result.gradedCount).toBe(1);
+      expect(result.bets[0].outcome).toBe("win");
+      expect(result.bets[0].settledAuto).toBe(true);
+    });
+
+    it("settles a home spread bet as a loss when home doesn't cover", () => {
+      const bets = [bet({ id: "a", betType: "spread", line: 20, side: "home", homeTeam: "Ohio State", awayTeam: "Michigan" })];
+      const result = autoGradeBets(bets, cfbGames, []);
+      expect(result.bets[0].outcome).toBe("loss");
+    });
+
+    it("settles an away spread bet as a win when away covers", () => {
+      const bets = [bet({ id: "a", betType: "spread", line: 20, side: "away", homeTeam: "Ohio State", awayTeam: "Michigan" })];
+      const result = autoGradeBets(bets, cfbGames, []);
+      expect(result.bets[0].outcome).toBe("win");
+    });
+
+    it("pushes a spread bet whose line exactly matches the final margin", () => {
+      const bets = [bet({ id: "a", betType: "spread", line: 13, side: "home", homeTeam: "Ohio State", awayTeam: "Michigan" })];
+      const result = autoGradeBets(bets, cfbGames, []);
+      expect(result.gradedCount).toBe(1);
+      expect(result.bets[0].outcome).toBe("push");
+    });
+
+    it("settles an over bet as a win when the total clears the line", () => {
+      const bets = [bet({ id: "a", betType: "total", line: 40, side: "over", homeTeam: "Ohio State", awayTeam: "Michigan" })];
+      const result = autoGradeBets(bets, cfbGames, []);
+      expect(result.bets[0].outcome).toBe("win");
+    });
+
+    it("settles an under bet as a win when the total falls short of the line", () => {
+      const bets = [bet({ id: "a", betType: "total", line: 55, side: "under", homeTeam: "Ohio State", awayTeam: "Michigan" })];
+      const result = autoGradeBets(bets, cfbGames, []);
+      expect(result.bets[0].outcome).toBe("win");
+    });
+
+    it("pushes a total bet whose line exactly matches the final total", () => {
+      const bets = [bet({ id: "a", betType: "total", line: 47, side: "over", homeTeam: "Ohio State", awayTeam: "Michigan" })];
+      const result = autoGradeBets(bets, cfbGames, []);
+      expect(result.bets[0].outcome).toBe("push");
+    });
+
+    it("leaves it pending when the structured fields are incomplete", () => {
+      const bets = [bet({ id: "a", betType: "spread", side: "home", homeTeam: "Ohio State", awayTeam: "Michigan" })]; // no line
+      const result = autoGradeBets(bets, cfbGames, []);
+      expect(result.gradedCount).toBe(0);
+      expect(result.bets[0].outcome).toBe("pending");
+    });
+
+    it("never touches an already-settled structured bet", () => {
+      const bets = [
+        bet({ id: "a", betType: "spread", line: 3, side: "away", homeTeam: "Ohio State", awayTeam: "Michigan", outcome: "win" }),
+      ];
+      const result = autoGradeBets(bets, cfbGames, []);
+      expect(result.gradedCount).toBe(0);
+      expect(result.bets[0].outcome).toBe("win");
+    });
+  });
 });

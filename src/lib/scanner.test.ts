@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { classifyPick, MAX_TRUSTED_DISAGREEMENT, MAX_TRUSTED_RATIO, pickSide } from "./scanner";
+import { removeVig } from "./devig";
+import { impliedProbability } from "./espn";
+import { classifyPick, MAX_TRUSTED_DISAGREEMENT, MAX_TRUSTED_RATIO, pickOverUnder, pickSide } from "./scanner";
 
 describe("pickSide", () => {
   it("picks the home side when its expectancy is higher", () => {
@@ -16,12 +18,16 @@ describe("pickSide", () => {
     expect(pick.team).toBe("Away");
   });
 
-  it("computes disagreement as model probability minus market-implied probability", () => {
-    // model gives home 0.677, market moneyline +1500 implies ~0.0625
+  it("computes disagreement as model probability minus the market's fair (vig-removed) probability", () => {
+    // model gives home 0.677; market moneyline +1500/-3000 implies a RAW
+    // 0.0625/0.9677 (summing to >1, the vig) — de-vigged, home's fair share
+    // of that is slightly below the raw 0.0625, per removeVig (devig.ts).
     const pick = pickSide(0.677, 1500, -3000, "Stanford", "Miami");
+    const { fairHome } = removeVig(impliedProbability(1500), impliedProbability(-3000));
     expect(pick.side).toBe("home");
-    expect(pick.marketImplied).toBeCloseTo(100 / 1600, 6);
-    expect(pick.disagreement).toBeCloseTo(0.677 - 100 / 1600, 6);
+    expect(fairHome).toBeLessThan(100 / 1600);
+    expect(pick.marketImplied).toBeCloseTo(fairHome, 10);
+    expect(pick.disagreement).toBeCloseTo(0.677 - fairHome, 10);
   });
 });
 
@@ -32,9 +38,10 @@ describe("classifyPick", () => {
   });
 
   it("returns a trustworthy edge with a recommended stake for a modest, plausible disagreement", () => {
-    // Away side: model gives it 70%, market (-150) implies 60% — a 10pt gap,
-    // under the trust threshold, with genuine positive expectancy. This is
-    // the kind of real, modest edge the app should actually act on.
+    // Away side: model gives it 70%, market (-150/+130) fair-implies ~58% —
+    // roughly a 12pt gap, under the trust threshold, with genuine positive
+    // expectancy. This is the kind of real, modest edge the app should
+    // actually act on.
     const pick = pickSide(0.3, 130, -150, "Home", "Away");
     expect(pick.side).toBe("away");
     const result = classifyPick(pick, 10000, 0.5);
@@ -46,8 +53,8 @@ describe("classifyPick", () => {
 
   it("flags rather than recommends a bet when the model wildly disagrees with the market (point-gap check)", () => {
     // The real case that motivated this rule: model gives a home team 67.7%
-    // against a market moneyline of +1500 (~6.25% implied) — a 61-point gap
-    // AND a ~10.8x ratio, so either check alone would catch this.
+    // against a market moneyline of +1500/-3000 (~6.1% fair-implied) — a
+    // ~62-point gap AND an ~11x ratio, so either check alone would catch this.
     const pick = pickSide(0.677, 1500, -3000, "Stanford", "Miami");
     const result = classifyPick(pick, 10000, 0.5);
     expect(result.status).toBe("flagged");
@@ -74,5 +81,40 @@ describe("classifyPick", () => {
   it("the default thresholds are 15 percentage points and a 2x ratio", () => {
     expect(MAX_TRUSTED_DISAGREEMENT).toBe(0.15);
     expect(MAX_TRUSTED_RATIO).toBe(2);
+  });
+});
+
+describe("pickOverUnder", () => {
+  it("picks the over when it has the better expectancy", () => {
+    // Model says 70% over at fair-ish odds -> clear positive expectancy on the over.
+    const pick = pickOverUnder(0.7, 110, -130);
+    expect(pick.side).toBe("over");
+  });
+
+  it("picks the under when it has the better expectancy", () => {
+    const pick = pickOverUnder(0.2, -130, 110);
+    expect(pick.side).toBe("under");
+  });
+
+  it("de-vigs the market before computing disagreement, same as pickSide", () => {
+    const pick = pickOverUnder(0.6, -110, -110);
+    // Standard -110/-110 de-vigs to an exact 50/50 fair split.
+    expect(pick.marketImplied).toBeCloseTo(0.5, 10);
+    expect(pick.disagreement).toBeCloseTo(0.1, 10);
+  });
+
+  it("feeds cleanly into classifyPick via the shared Classifiable shape", () => {
+    // A wild disagreement should still get flagged, not recommended, same guardrails as moneyline picks.
+    const pick = pickOverUnder(0.9, 1500, -3000);
+    const result = classifyPick(pick, 10000, 0.5);
+    expect(result.status).toBe("flagged");
+  });
+
+  it("returns a trustworthy edge with a stake for a modest, plausible disagreement", () => {
+    // Fair-implied over ~46%, model says 60% -> ~14pt gap, under the 15pt trust threshold.
+    const pick = pickOverUnder(0.6, 110, -125);
+    const result = classifyPick(pick, 10000, 0.5);
+    expect(result.status).toBe("edge");
+    if (result.status === "edge") expect(result.stake).toBeGreaterThan(0);
   });
 });

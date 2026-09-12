@@ -16,16 +16,20 @@ import {
   UpcomingGame,
 } from "@/lib/espn";
 import { currency } from "@/lib/format";
+import { NflGameContext, loadNflGameContext } from "@/lib/gameContext";
 import { loadGames } from "@/lib/loadGames";
 import { predictProba, trainLogisticRegression } from "@/lib/logisticRegression";
+import { buildFeatureVector } from "@/lib/modelFeatures";
 import { FRACTIONAL_OPTIONS, formatMoneyline, parseMoneyline } from "@/lib/odds";
+import { loadPlayerUsage, primaryStarter, PlayerUsageRow } from "@/lib/playerUsage";
+import { buildQbValueModel, qbValueDiff } from "@/lib/qbValue";
 import { headToHead, headToHeadRecord, seasonAverage, teamStatTrend } from "@/lib/research";
 import { classifyPick, MAX_TRUSTED_DISAGREEMENT, MAX_TRUSTED_RATIO, pickSide, PickResult } from "@/lib/scanner";
 import { SCHEDULE_LOOKAHEAD_DAYS, SPORT_ELO_OPTIONS, SPORT_LABELS } from "@/lib/sportConfig";
 import { fitMarginModel, predictMargin, predictTotal, seasonScoringAverage } from "@/lib/spreadModel";
 import { matchKeyFor, matchTeamName } from "@/lib/teamMatch";
 import { computeRankings } from "@/lib/rankings";
-import { computeTeamStatDiffs, loadTeamStats, NEUTRAL_TEAM_STAT_FEATURES, TeamGameStat } from "@/lib/teamStats";
+import { computeTeamStatDiffs, loadTeamStats, TeamGameStat } from "@/lib/teamStats";
 import { useLocalStorageState } from "@/lib/useLocalStorageState";
 import { Callout } from "./Callout";
 import { StatTile } from "./StatTile";
@@ -38,6 +42,8 @@ interface Snapshot {
   sport: Sport;
   historicalGames: Game[];
   teamGameStats: TeamGameStat[] | null;
+  playerUsage: PlayerUsageRow[];
+  gameContext: Map<string, NflGameContext> | null;
   upcomingGames: UpcomingGame[];
   currentWeek: number | null;
   oddsByEspnId: Map<string, GameOdds | null>;
@@ -224,9 +230,13 @@ export function WeeklyEdges({ sport }: { sport: Sport }) {
     let cancelled = false;
     (async () => {
       try {
-        const [historicalGames, teamGameStats, schedule] = await Promise.all([
+        // gameContext (per-game starting-QB names) only exists for NFL — see gameContext.ts.
+        const gameContextPromise = sport === "nfl" ? loadNflGameContext() : Promise.resolve(new Map<string, NflGameContext>());
+        const [historicalGames, teamGameStats, playerUsage, gameContext, schedule] = await Promise.all([
           loadGames(sport),
           loadTeamStats(sport),
+          loadPlayerUsage(sport),
+          gameContextPromise,
           fetchUpcomingGames(sport, SCHEDULE_LOOKAHEAD_DAYS[sport]),
         ]);
         const { games: upcomingGames, currentWeek } = schedule;
@@ -253,6 +263,8 @@ export function WeeklyEdges({ sport }: { sport: Sport }) {
             sport,
             historicalGames,
             teamGameStats,
+            playerUsage,
+            gameContext,
             upcomingGames,
             currentWeek,
             oddsByEspnId,
@@ -268,6 +280,8 @@ export function WeeklyEdges({ sport }: { sport: Sport }) {
             sport,
             historicalGames: [],
             teamGameStats: null,
+            playerUsage: [],
+            gameContext: null,
             upcomingGames: [],
             currentWeek: null,
             oddsByEspnId: new Map(),
@@ -287,7 +301,7 @@ export function WeeklyEdges({ sport }: { sport: Sport }) {
 
   const analysis = useMemo(() => {
     if (loading || !snapshot || snapshot.error) return null;
-    const { historicalGames, teamGameStats, upcomingGames, oddsByEspnId } = snapshot;
+    const { historicalGames, teamGameStats, playerUsage, gameContext, upcomingGames, oddsByEspnId } = snapshot;
     if (historicalGames.length === 0) return null;
 
     const knownTeams = new Set<string>();
@@ -304,12 +318,24 @@ export function WeeklyEdges({ sport }: { sport: Sport }) {
     // don't publish it, so that feature stays 0 for CFB) — see teamStats.ts.
     const statDiffs = teamGameStats ? computeTeamStatDiffs(historicalGames, teamGameStats) : new Map();
     const hasTeamStats = statDiffs.size > 0;
-    const statFeaturesFor = (r: { gameId?: string }) => (r.gameId && statDiffs.get(r.gameId)) || NEUTRAL_TEAM_STAT_FEATURES;
-    const featuresFor = (r: (typeof records)[number]) => {
-      if (!hasTeamStats) return [r.eloDiff];
-      const f = statFeaturesFor(r);
-      return [r.eloDiff, f.totalYardsDiff, f.turnoverMarginDiff, f.offEpaDiff];
+
+    // Starting-QB value (walk-forward, no-leakage) — validated by held-out
+    // Brier-score backtesting (see qbValue.ts) before being wired in. NFL-only.
+    const qbModel = sport === "nfl" ? buildQbValueModel(historicalGames, playerUsage) : null;
+    const hasQbValue = sport === "nfl" && !!gameContext && gameContext.size > 0 && !!qbModel;
+    const qbValueForRecord = (r: { gameId?: string; date: string }) => {
+      if (!qbModel || !r.gameId || !gameContext) return null;
+      const ctx = gameContext.get(r.gameId);
+      if (!ctx) return null;
+      return qbValueDiff(qbModel, ctx.homeQbName, ctx.awayQbName, r.date);
     };
+
+    const featuresFor = (r: (typeof records)[number]) =>
+      buildFeatureVector(
+        { eloDiff: r.eloDiff, teamStats: r.gameId ? (statDiffs.get(r.gameId) ?? null) : null, qbValue: qbValueForRecord(r) },
+        hasTeamStats,
+        hasQbValue,
+      );
 
     const model = trainLogisticRegression(
       records.map(featuresFor),
@@ -355,20 +381,28 @@ export function WeeklyEdges({ sport }: { sport: Sport }) {
       const awayElo = finalRatings.get(matchedAway) ?? eloOptions.initialRating;
       const homeAdv = game.neutralSite ? 0 : eloOptions.homeAdvantage;
       const eloDiff = homeElo + homeAdv - awayElo;
-      let features = [eloDiff];
-      if (hasTeamStats) {
-        const homeAvg = seasonAvgFor(matchedHome);
-        const awayAvg = seasonAvgFor(matchedAway);
-        const f =
-          homeAvg && awayAvg
-            ? {
-                totalYardsDiff: homeAvg.totalYards - awayAvg.totalYards,
-                turnoverMarginDiff: homeAvg.turnoverMargin - awayAvg.turnoverMargin,
-                offEpaDiff: homeAvg.offEpa - awayAvg.offEpa,
-              }
-            : NEUTRAL_TEAM_STAT_FEATURES;
-        features = [eloDiff, f.totalYardsDiff, f.turnoverMarginDiff, f.offEpaDiff];
-      }
+      const homeAvg = seasonAvgFor(matchedHome);
+      const awayAvg = seasonAvgFor(matchedAway);
+      const teamStatsFeatures =
+        homeAvg && awayAvg
+          ? {
+              totalYardsDiff: homeAvg.totalYards - awayAvg.totalYards,
+              turnoverMarginDiff: homeAvg.turnoverMargin - awayAvg.turnoverMargin,
+              offEpaDiff: homeAvg.offEpa - awayAvg.offEpa,
+            }
+          : null;
+      // Presumed current starters (this season's passing-usage leader), valued
+      // as of today — a same-week backup change won't be caught until it
+      // shows up in next-day usage data.
+      const liveQbValue = hasQbValue
+        ? qbValueDiff(
+            qbModel!,
+            primaryStarter(playerUsage, historicalGames, matchedHome, "passing", currentSeason)?.player ?? null,
+            primaryStarter(playerUsage, historicalGames, matchedAway, "passing", currentSeason)?.player ?? null,
+            new Date().toISOString().slice(0, 10),
+          )
+        : null;
+      const features = buildFeatureVector({ eloDiff, teamStats: teamStatsFeatures, qbValue: liveQbValue }, hasTeamStats, hasQbValue);
       const pHome = predictProba(model, features);
 
       const odds = oddsByEspnId.get(game.espnId);
@@ -441,7 +475,7 @@ export function WeeklyEdges({ sport }: { sport: Sport }) {
   // immediately before that specific game.
   const reportCard = useMemo(() => {
     if (loading || !snapshot || snapshot.error) return null;
-    const { historicalGames, teamGameStats, retroOddsByGameId } = snapshot;
+    const { historicalGames, teamGameStats, playerUsage, gameContext, retroOddsByGameId } = snapshot;
     if (historicalGames.length === 0) return null;
 
     const retroCutoff = new Date();
@@ -452,12 +486,20 @@ export function WeeklyEdges({ sport }: { sport: Sport }) {
     const { records } = runElo(historicalGames, eloOptions);
     const statDiffs = teamGameStats ? computeTeamStatDiffs(historicalGames, teamGameStats) : new Map();
     const hasTeamStats = statDiffs.size > 0;
-    const statFeaturesFor = (r: { gameId?: string }) => (r.gameId && statDiffs.get(r.gameId)) || NEUTRAL_TEAM_STAT_FEATURES;
-    const featuresFor = (r: (typeof records)[number]) => {
-      if (!hasTeamStats) return [r.eloDiff];
-      const f = statFeaturesFor(r);
-      return [r.eloDiff, f.totalYardsDiff, f.turnoverMarginDiff, f.offEpaDiff];
+
+    const qbModel = sport === "nfl" ? buildQbValueModel(historicalGames, playerUsage) : null;
+    const hasQbValue = sport === "nfl" && !!gameContext && gameContext.size > 0 && !!qbModel;
+    const qbValueForRecord = (r: { gameId?: string; date: string }) => {
+      if (!qbModel || !r.gameId || !gameContext) return null;
+      const ctx = gameContext.get(r.gameId);
+      return ctx ? qbValueDiff(qbModel, ctx.homeQbName, ctx.awayQbName, r.date) : null;
     };
+    const featuresFor = (r: (typeof records)[number]) =>
+      buildFeatureVector(
+        { eloDiff: r.eloDiff, teamStats: r.gameId ? (statDiffs.get(r.gameId) ?? null) : null, qbValue: qbValueForRecord(r) },
+        hasTeamStats,
+        hasQbValue,
+      );
 
     const priorRecords = records.filter((r) => r.date < retroCutoffStr);
     const retroRecords = records.filter((r) => r.gameId && r.date >= retroCutoffStr);
@@ -622,6 +664,10 @@ export function WeeklyEdges({ sport }: { sport: Sport }) {
                   p: (row.pick.summary.p * 100).toFixed(1),
                   b: row.pick.b.toFixed(4),
                   stake: row.stake.toFixed(0),
+                  // Carried through purely for closing-line-value lookup later (clv.ts) —
+                  // doesn't change how this bet settles (still the free-text ML path).
+                  homeTeam: row.matchedHome,
+                  awayTeam: row.matchedAway,
                 }).toString();
                 const homeStats =
                   sport === "nfl" ? analysis.teamStatsDisplayFor(row.matchedHome) : snapshot?.teamStatsByTeamId.get(row.game.homeTeamId ?? "");

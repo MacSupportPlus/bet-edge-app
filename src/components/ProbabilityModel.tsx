@@ -6,10 +6,14 @@ import { computeEloDataset, EloOptions, Game } from "@/lib/elo";
 import { moneylineToDecimalB } from "@/lib/espn";
 import { compactCurrency } from "@/lib/format";
 import { loadGames } from "@/lib/loadGames";
+import { NflGameContext, loadNflGameContext } from "@/lib/gameContext";
 import { predictProba, trainLogisticRegression } from "@/lib/logisticRegression";
 import { BacktestStrategy, runBacktest } from "@/lib/backtest";
 import { loadMarketOdds, MarketOdds } from "@/lib/marketOdds";
-import { computeTeamStatDiffs, loadTeamStats, NEUTRAL_TEAM_STAT_FEATURES, TeamGameStat } from "@/lib/teamStats";
+import { buildFeatureVector } from "@/lib/modelFeatures";
+import { loadPlayerUsage, PlayerUsageRow } from "@/lib/playerUsage";
+import { buildQbValueModel, qbValueDiff } from "@/lib/qbValue";
+import { computeTeamStatDiffs, loadTeamStats, TeamGameStat } from "@/lib/teamStats";
 import { BacktestChart } from "./BacktestChart";
 import { ReliabilityChart } from "./ReliabilityChart";
 import { StatTile } from "./StatTile";
@@ -36,12 +40,16 @@ export function ProbabilityModel() {
     games: Game[] | null;
     teamStats: TeamGameStat[] | null;
     marketOdds: Map<string, MarketOdds> | null;
+    playerUsage: PlayerUsageRow[] | null;
+    gameContext: Map<string, NflGameContext> | null;
     error: string | null;
   }>({
     dataset: "nfl",
     games: null,
     teamStats: null,
     marketOdds: null,
+    playerUsage: null,
+    gameContext: null,
     error: null,
   });
 
@@ -52,12 +60,17 @@ export function ProbabilityModel() {
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([loadGames(dataset), loadTeamStats(dataset), loadMarketOdds(dataset)])
-      .then(([g, ts, mo]) => {
-        if (!cancelled) setFetchResult({ dataset, games: g, teamStats: ts, marketOdds: mo, error: null });
+    // gameContext (per-game starting-QB names) only exists for NFL — see
+    // gameContext.ts — so CFB simply never enables the QB-value feature.
+    const gameContextPromise = dataset === "nfl" ? loadNflGameContext() : Promise.resolve(new Map<string, NflGameContext>());
+    Promise.all([loadGames(dataset), loadTeamStats(dataset), loadMarketOdds(dataset), loadPlayerUsage(dataset), gameContextPromise])
+      .then(([g, ts, mo, pu, gc]) => {
+        if (!cancelled) setFetchResult({ dataset, games: g, teamStats: ts, marketOdds: mo, playerUsage: pu, gameContext: gc, error: null });
       })
       .catch((e) => {
-        if (!cancelled) setFetchResult({ dataset, games: null, teamStats: null, marketOdds: null, error: String(e) });
+        if (!cancelled) {
+          setFetchResult({ dataset, games: null, teamStats: null, marketOdds: null, playerUsage: null, gameContext: null, error: String(e) });
+        }
       });
     return () => {
       cancelled = true;
@@ -70,6 +83,8 @@ export function ProbabilityModel() {
   const games = fetchResult.dataset === dataset ? fetchResult.games : null;
   const teamStats = fetchResult.dataset === dataset ? fetchResult.teamStats : null;
   const marketOdds = fetchResult.dataset === dataset ? fetchResult.marketOdds : null;
+  const playerUsage = fetchResult.dataset === dataset ? fetchResult.playerUsage : null;
+  const gameContext = fetchResult.dataset === dataset ? fetchResult.gameContext : null;
   const error = fetchResult.dataset === dataset ? fetchResult.error : null;
   const loading = fetchResult.dataset !== dataset || (games === null && error === null);
 
@@ -92,13 +107,27 @@ export function ProbabilityModel() {
     // doesn't publish it), so that one feature is always 0 for CFB rows.
     const statDiffs = teamStats ? computeTeamStatDiffs(games, teamStats) : new Map();
     const hasTeamStats = statDiffs.size > 0;
-    const statFeaturesFor = (r: { gameId?: string }) => (r.gameId && statDiffs.get(r.gameId)) || NEUTRAL_TEAM_STAT_FEATURES;
-    const featuresFor = (r: (typeof records)[number]) => {
-      const base = [r.eloDiff];
-      if (!hasTeamStats) return base;
-      const f = statFeaturesFor(r);
-      return [...base, f.totalYardsDiff, f.turnoverMarginDiff, f.offEpaDiff];
+
+    // Starting-QB efficiency (walk-forward, no-leakage) as a further extra
+    // feature — validated by held-out Brier-score backtesting before being
+    // wired in (see qbValue.ts's doc comment for the numbers), not just
+    // assumed to help. NFL-only: depends on gameContext.ts's per-game
+    // starting-QB names, which only nflverse's archive carries.
+    const qbModel = playerUsage ? buildQbValueModel(games, playerUsage) : null;
+    const hasQbValue = dataset === "nfl" && !!gameContext && gameContext.size > 0 && !!qbModel;
+    const qbValueFor = (r: { gameId?: string; date: string }) => {
+      if (!qbModel || !r.gameId || !gameContext) return null;
+      const ctx = gameContext.get(r.gameId);
+      if (!ctx) return null;
+      return qbValueDiff(qbModel, ctx.homeQbName, ctx.awayQbName, r.date);
     };
+
+    const featuresFor = (r: (typeof records)[number]) =>
+      buildFeatureVector(
+        { eloDiff: r.eloDiff, teamStats: r.gameId ? (statDiffs.get(r.gameId) ?? null) : null, qbValue: qbValueFor(r) },
+        hasTeamStats,
+        hasQbValue,
+      );
 
     const model = trainLogisticRegression(
       train.map(featuresFor),
@@ -130,6 +159,20 @@ export function ProbabilityModel() {
       eloOnlyBrier = brierScore(eloOnlyPredictions, testOutcomes);
     }
 
+    // Same idea, isolating the QB-value feature specifically: the exact
+    // same model (Elo + team stats) but with QB value left out.
+    let noQbBrier: number | null = null;
+    if (hasQbValue) {
+      const noQbFeaturesFor = (r: (typeof records)[number]) =>
+        buildFeatureVector({ eloDiff: r.eloDiff, teamStats: r.gameId ? (statDiffs.get(r.gameId) ?? null) : null, qbValue: null }, hasTeamStats, false);
+      const noQbModel = trainLogisticRegression(train.map(noQbFeaturesFor), train.map((r) => r.homeWin), {
+        iterations: 300,
+        learningRate: 0.5,
+      });
+      const noQbPredictions = test.map((r) => predictProba(noQbModel, noQbFeaturesFor(r)));
+      noQbBrier = brierScore(noQbPredictions, testOutcomes);
+    }
+
     const bins = reliabilityBins(testPredictions, testOutcomes, 10);
 
     // Price each held-out game at its real historical moneyline when one is
@@ -157,9 +200,9 @@ export function ProbabilityModel() {
     });
 
     // Illustrative sensitivity: how much does +200 Elo points move predicted p?
-    // Team-stat features held at neutral (0 = "no information yet") so this
+    // Every other feature held at neutral (0 = "no information yet") so this
     // isolates Elo's effect alone.
-    const illustrativeFeatures = (eloDiff: number) => (hasTeamStats ? [eloDiff, 0, 0, 0] : [eloDiff]);
+    const illustrativeFeatures = (eloDiff: number) => buildFeatureVector({ eloDiff, teamStats: null, qbValue: null }, hasTeamStats, hasQbValue);
     const pAtEven = predictProba(model, illustrativeFeatures(0));
     const pAt200 = predictProba(model, illustrativeFeatures(200));
 
@@ -172,13 +215,15 @@ export function ProbabilityModel() {
       naiveBrier,
       hasTeamStats,
       eloOnlyBrier,
+      hasQbValue,
+      noQbBrier,
       bins,
       backtests,
       realOddsCount,
       pAtEven,
       pAt200,
     };
-  }, [games, teamStats, marketOdds, eloOptions, startingBankroll]);
+  }, [games, teamStats, playerUsage, gameContext, dataset, marketOdds, eloOptions, startingBankroll]);
 
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-6 py-10">
@@ -300,7 +345,7 @@ export function ProbabilityModel() {
             favorite grows to {(analysis.pAt200 * 100).toFixed(0)}% with a +200 Elo edge.
           </p>
 
-          <div className={`grid grid-cols-2 gap-3 ${analysis.hasTeamStats ? "sm:grid-cols-3" : "sm:grid-cols-2"}`}>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             <StatTile label="Brier score (test set)" value={analysis.brier.toFixed(4)} sub="lower is better; 0 = perfect" />
             <StatTile
               label="vs. naive baseline"
@@ -314,6 +359,14 @@ export function ProbabilityModel() {
                 value={analysis.brier < analysis.eloOnlyBrier ? "better" : "worse"}
                 sub={`Elo-only Brier: ${analysis.eloOnlyBrier.toFixed(4)}`}
                 accent={analysis.brier < analysis.eloOnlyBrier ? "good" : "critical"}
+              />
+            )}
+            {analysis.hasQbValue && analysis.noQbBrier !== null && (
+              <StatTile
+                label="vs. no QB value"
+                value={analysis.brier < analysis.noQbBrier ? "better" : "worse"}
+                sub={`without QB: ${analysis.noQbBrier.toFixed(4)}`}
+                accent={analysis.brier < analysis.noQbBrier ? "good" : "critical"}
               />
             )}
           </div>
@@ -332,6 +385,19 @@ export function ProbabilityModel() {
               of this archive is backfilled from ESPN&apos;s box scores rather than a
               purpose-built stats feed, and has no offensive-EPA figure, so that one feature stays
               at 0 for every CFB game.
+            </p>
+          )}
+
+          {analysis.hasQbValue && (
+            <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+              <strong style={{ color: "var(--text-secondary)" }}>Starting-QB value (NFL only):</strong> each
+              team&apos;s starting QB brings a walk-forward efficiency rating (Adjusted Net Yards per
+              Attempt, shrunk toward league average for small samples) into the model as well — using
+              only that QB&apos;s attempts BEFORE the game being predicted, so a hot or cold streak can
+              never leak backward. The &quot;vs. no QB value&quot; tile trains the identical model with
+              that one feature removed and compares Brier scores directly, the same honesty check as
+              the team-stats comparison above. This isn&apos;t available for college football, which has
+              no reliable per-game starting-QB record to draw on.
             </p>
           )}
 

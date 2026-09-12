@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   impliedProbability,
+  isLikelyOut,
   isStaleSeasonStats,
   moneylineToDecimalB,
+  parseInjuries,
   parseOddsSummary,
   parseScoreboardEvent,
   parseTeamStatistics,
@@ -63,14 +65,17 @@ describe("parseScoreboardEvent", () => {
       {
         neutralSite: false,
         competitors: [
-          { homeAway: "home", team: { id: "30", location: "USC", abbreviation: "USC" } },
-          { homeAway: "away", team: { id: "23", location: "San José State", abbreviation: "SJSU" } },
+          { homeAway: "home", team: { id: "30", location: "USC", abbreviation: "USC", displayName: "USC Trojans" } },
+          {
+            homeAway: "away",
+            team: { id: "23", location: "San José State", abbreviation: "SJSU", displayName: "San José State Spartans" },
+          },
         ],
       },
     ],
   };
 
-  it("extracts home/away team, abbreviations, ids, and neutral-site flag", () => {
+  it("extracts home/away team, abbreviations, display names, ids, and neutral-site flag", () => {
     const result = parseScoreboardEvent(validEvent);
     expect(result).toEqual({
       espnId: "401864494",
@@ -79,13 +84,15 @@ describe("parseScoreboardEvent", () => {
       awayTeam: "San José State",
       homeTeamAbbr: "USC",
       awayTeamAbbr: "SJSU",
+      homeTeamDisplayName: "USC Trojans",
+      awayTeamDisplayName: "San José State Spartans",
       homeTeamId: "30",
       awayTeamId: "23",
       neutralSite: false,
     });
   });
 
-  it("falls back to null team ids and abbreviations when ESPN omits them", () => {
+  it("falls back to null team ids, abbreviations, and display names when ESPN omits them", () => {
     const result = parseScoreboardEvent({
       id: "1",
       date: "x",
@@ -102,6 +109,8 @@ describe("parseScoreboardEvent", () => {
     expect(result?.awayTeamId).toBeNull();
     expect(result?.homeTeamAbbr).toBeNull();
     expect(result?.awayTeamAbbr).toBeNull();
+    expect(result?.homeTeamDisplayName).toBeNull();
+    expect(result?.awayTeamDisplayName).toBeNull();
   });
 
   it("returns null for malformed/missing data instead of throwing", () => {
@@ -124,18 +133,24 @@ describe("parseOddsSummary", () => {
       {
         provider: { name: "DraftKings" },
         spread: -37.5,
+        overUnder: 44.5,
+        overOdds: -108,
+        underOdds: -112,
         homeTeamOdds: { moneyLine: -100000 },
         awayTeamOdds: { moneyLine: 5000 },
       },
     ],
   };
 
-  it("extracts provider and both moneylines", () => {
+  it("extracts provider, both moneylines, spread, and the total", () => {
     expect(parseOddsSummary(validSummary)).toEqual({
       provider: "DraftKings",
       homeMoneyline: -100000,
       awayMoneyline: 5000,
       spread: -37.5,
+      total: 44.5,
+      overOdds: -108,
+      underOdds: -112,
     });
   });
 
@@ -145,7 +160,7 @@ describe("parseOddsSummary", () => {
     expect(parseOddsSummary(null)).toBeNull();
   });
 
-  it("returns nulls for missing moneylines rather than throwing", () => {
+  it("returns nulls for missing fields rather than throwing", () => {
     const noMoneyline = {
       pickcenter: [{ provider: { name: "DraftKings" }, spread: -42.5, homeTeamOdds: {}, awayTeamOdds: {} }],
     };
@@ -154,7 +169,74 @@ describe("parseOddsSummary", () => {
       homeMoneyline: null,
       awayMoneyline: null,
       spread: -42.5,
+      total: null,
+      overOdds: null,
+      underOdds: null,
     });
+  });
+});
+
+describe("parseInjuries", () => {
+  const validSummary = {
+    injuries: [
+      {
+        team: { displayName: "Seattle Seahawks" },
+        injuries: [
+          { status: "Doubtful", athlete: { displayName: "Sam Darnold", position: { abbreviation: "QB" } } },
+          { status: "Questionable", athlete: { displayName: "Some Guy", position: { abbreviation: "WR" } } },
+        ],
+      },
+      {
+        team: { displayName: "New England Patriots" },
+        injuries: [{ status: "Injured Reserve", athlete: { displayName: "A.J. Brown", position: { abbreviation: "WR" } } }],
+      },
+    ],
+  };
+
+  it("flattens both teams' injury reports into one list", () => {
+    expect(parseInjuries(validSummary)).toEqual([
+      { team: "Seattle Seahawks", player: "Sam Darnold", position: "QB", status: "Doubtful" },
+      { team: "Seattle Seahawks", player: "Some Guy", position: "WR", status: "Questionable" },
+      { team: "New England Patriots", player: "A.J. Brown", position: "WR", status: "Injured Reserve" },
+    ]);
+  });
+
+  it("returns an empty list when there's no injuries field or malformed input", () => {
+    expect(parseInjuries({})).toEqual([]);
+    expect(parseInjuries(null)).toEqual([]);
+    expect(parseInjuries({ injuries: [] })).toEqual([]);
+  });
+
+  it("skips entries missing a team name, player name, or status instead of throwing", () => {
+    const malformed = {
+      injuries: [
+        { injuries: [{ status: "Out", athlete: { displayName: "No Team" } }] },
+        { team: { displayName: "Team B" }, injuries: [{ athlete: { displayName: "No Status" } }] },
+        { team: { displayName: "Team C" }, injuries: [{ status: "Out", athlete: {} }] },
+      ],
+    };
+    expect(parseInjuries(malformed)).toEqual([]);
+  });
+
+  it("defaults position to null when ESPN omits it", () => {
+    const noPosition = {
+      injuries: [{ team: { displayName: "Team A" }, injuries: [{ status: "Out", athlete: { displayName: "Player X" } }] }],
+    };
+    expect(parseInjuries(noPosition)).toEqual([{ team: "Team A", player: "Player X", position: null, status: "Out" }]);
+  });
+});
+
+describe("isLikelyOut", () => {
+  it("treats Out/Doubtful/IR/Suspended/PUP as likely out", () => {
+    for (const status of ["Out", "Doubtful", "Injured Reserve", "IR", "Suspended", "PUP"]) {
+      expect(isLikelyOut(status)).toBe(true);
+    }
+  });
+
+  it("does NOT treat Questionable/Probable/Day-To-Day as likely out", () => {
+    for (const status of ["Questionable", "Probable", "Day-To-Day", "Active"]) {
+      expect(isLikelyOut(status)).toBe(false);
+    }
   });
 });
 

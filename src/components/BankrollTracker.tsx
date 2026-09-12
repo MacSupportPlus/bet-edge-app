@@ -5,12 +5,16 @@ import { useSearchParams } from "next/navigation";
 import {
   BetEntry,
   BetOutcome,
+  BetSide,
+  BetType,
   drawdownSeries,
   realizedPath,
   summarizeBankroll,
   theoreticalPath,
 } from "@/lib/bankroll";
 import { autoGradeBets } from "@/lib/autoGradeBets";
+import { ClosingLine, findClosingLine, loadClosingLines } from "@/lib/closingLines";
+import { computeClv } from "@/lib/clv";
 import { Game } from "@/lib/elo";
 import { currency } from "@/lib/format";
 import { loadGames } from "@/lib/loadGames";
@@ -34,7 +38,18 @@ function today(): string {
 }
 
 function emptyForm() {
-  return { date: today(), description: "", pPercent: 55, b: 1, stake: 100 };
+  return {
+    date: today(),
+    description: "",
+    pPercent: 55,
+    b: 1,
+    stake: 100,
+    homeTeam: undefined as string | undefined,
+    awayTeam: undefined as string | undefined,
+    betType: undefined as BetType | undefined,
+    line: undefined as number | undefined,
+    side: undefined as BetSide | undefined,
+  };
 }
 
 export function BankrollTracker() {
@@ -59,6 +74,17 @@ export function BankrollTracker() {
       pPercent: p ? Number(p) : 55,
       b: b ? Number(b) : 1,
       stake: stake ? Number(stake) : 100,
+      // Carried through purely for closing-line-value lookup (clv.ts) — absent for
+      // manually-typed bets or links that don't provide them.
+      homeTeam: searchParams.get("homeTeam") ?? undefined,
+      awayTeam: searchParams.get("awayTeam") ?? undefined,
+      // Structured spread/total fields (see bankroll.ts's BetEntry) — set only by
+      // a "Log this bet" link from a spread/total check (e.g. Research), so this
+      // bet can auto-settle directly against the final score, no description
+      // parsing needed.
+      betType: (searchParams.get("betType") as BetType | null) ?? undefined,
+      line: searchParams.get("line") ? Number(searchParams.get("line")) : undefined,
+      side: (searchParams.get("side") as BetSide | null) ?? undefined,
     };
   });
 
@@ -69,6 +95,22 @@ export function BankrollTracker() {
   // description is parseable); a manually-typed one stays manual-only.
   const [archives, setArchives] = useState<{ cfb: Game[]; nfl: Game[] } | null>(null);
   const [lastGradedCount, setLastGradedCount] = useState<number | null>(null);
+
+  // Closing lines for CLV (clv.ts) — a separate, best-effort fetch (empty
+  // arrays if the live-odds refresh hasn't captured any yet) that never
+  // blocks the rest of the page.
+  const [closingLines, setClosingLines] = useState<{ cfb: ClosingLine[]; nfl: ClosingLine[] }>({ cfb: [], nfl: [] });
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([loadClosingLines("cfb"), loadClosingLines("nfl")])
+      .then(([cfb, nfl]) => {
+        if (!cancelled) setClosingLines({ cfb, nfl });
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -114,6 +156,29 @@ export function BankrollTracker() {
     [bets],
   );
 
+  // Closing Line Value — only resolvable for moneyline bets logged via "Log
+  // this bet" (parseable description) that also carry homeTeam/awayTeam AND
+  // have a captured closing line on file; see clv.ts's doc comment for why
+  // this is scoped to moneyline for now.
+  const clvByBetId = useMemo(() => {
+    const map = new Map<string, ReturnType<typeof computeClv>>();
+    for (const bet of bets) {
+      if (!bet.homeTeam || !bet.awayTeam) continue;
+      const lines = [...closingLines.nfl, ...closingLines.cfb];
+      const line = findClosingLine(lines, bet.homeTeam, bet.awayTeam, bet.date);
+      if (!line) continue;
+      const clv = computeClv(bet, line);
+      if (clv) map.set(bet.id, clv);
+    }
+    return map;
+  }, [bets, closingLines]);
+
+  const avgClvPoints = useMemo(() => {
+    const values = [...clvByBetId.values()].filter((v): v is NonNullable<typeof v> => v !== null && v !== undefined);
+    if (values.length === 0) return null;
+    return values.reduce((s, v) => s + v.clvPoints, 0) / values.length;
+  }, [clvByBetId]);
+
   function addBet() {
     if (!form.description.trim() || form.stake <= 0) return;
     const bet: BetEntry = {
@@ -124,6 +189,11 @@ export function BankrollTracker() {
       b: form.b,
       stake: form.stake,
       outcome: "pending",
+      homeTeam: form.homeTeam,
+      awayTeam: form.awayTeam,
+      betType: form.betType,
+      line: form.line,
+      side: form.side,
     };
     setBets((prev) => [...prev, bet]);
     setForm(emptyForm());
@@ -225,6 +295,26 @@ export function BankrollTracker() {
         />
         <StatTile label="Max drawdown" value={`${(summary.maxDrawdown * 100).toFixed(1)}%`} />
       </div>
+
+      {avgClvPoints !== null && (
+        <div
+          className="flex flex-wrap items-center gap-3 rounded-lg border p-4"
+          style={{ background: "var(--card-bg)", borderColor: "var(--card-border)" }}
+        >
+          <StatTile
+            label="Avg. closing line value"
+            value={`${avgClvPoints >= 0 ? "+" : ""}${(avgClvPoints * 100).toFixed(1)}pts`}
+            sub={`${clvByBetId.size} bet${clvByBetId.size === 1 ? "" : "s"} with a captured closing line`}
+            accent={avgClvPoints >= 0 ? "good" : "critical"}
+          />
+          <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+            Positive means your price was better than the closing line, on average — the
+            single most-cited long-run skill signal among sharp bettors, independent of whether
+            the bet actually won. Only moneyline bets logged via a &quot;Log this bet&quot; link,
+            with a closing line captured before kickoff, count toward this.
+          </p>
+        </div>
+      )}
 
       {/* chart */}
       <div className="rounded-lg border p-4" style={{ background: "var(--card-bg)", borderColor: "var(--card-border)" }}>
@@ -341,6 +431,19 @@ export function BankrollTracker() {
                 <span className="tabular-nums" style={{ color: "var(--text-secondary)" }}>
                   {currency(bet.stake)}
                 </span>
+                {clvByBetId.get(bet.id) && (
+                  <span
+                    className="rounded-full px-2 py-0.5 text-xs tabular-nums"
+                    title="Closing line value — your price vs. the closing line for the same side"
+                    style={{
+                      background: "var(--gridline)",
+                      color: clvByBetId.get(bet.id)!.beatClose ? "var(--status-good)" : "var(--status-critical)",
+                    }}
+                  >
+                    CLV {clvByBetId.get(bet.id)!.clvPoints >= 0 ? "+" : ""}
+                    {(clvByBetId.get(bet.id)!.clvPoints * 100).toFixed(1)}pts
+                  </span>
+                )}
                 {bet.outcome === "pending" ? (
                   <div className="flex items-center gap-2">
                     <span

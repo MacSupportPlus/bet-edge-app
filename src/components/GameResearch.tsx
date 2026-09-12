@@ -5,18 +5,32 @@ import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { BetEntry, summarizeBankroll } from "@/lib/bankroll";
 import { DEFAULT_ELO_OPTIONS, Game, runElo } from "@/lib/elo";
-import { fetchGameOdds, GameOdds } from "@/lib/espn";
+import { fetchGameSummary, GameOdds, PlayerInjury } from "@/lib/espn";
 import { currency } from "@/lib/format";
+import { NflGameContext, loadNflGameContext } from "@/lib/gameContext";
 import { loadGames } from "@/lib/loadGames";
 import { predictProba, sigmoid, trainLogisticRegression } from "@/lib/logisticRegression";
+import { buildFeatureVector } from "@/lib/modelFeatures";
 import { FRACTIONAL_OPTIONS, formatMoneyline, parseMoneyline } from "@/lib/odds";
 import { computeQbRankings } from "@/lib/playerRankings";
 import { loadPlayerUsage, primaryStarter, PlayerUsageRow, UsageCategory, USAGE_CATEGORY_LABELS, formatStatLine } from "@/lib/playerUsage";
+import { buildQbValueModel, qbValueDiff, resolveLiveStarter } from "@/lib/qbValue";
 import { computeRankings } from "@/lib/rankings";
 import { headToHead, headToHeadRecord, seasonAverage, teamStatTrend } from "@/lib/research";
-import { classifyPick, MAX_TRUSTED_DISAGREEMENT, MAX_TRUSTED_RATIO, pickSide } from "@/lib/scanner";
+import { classifyPick, MAX_TRUSTED_DISAGREEMENT, MAX_TRUSTED_RATIO, pickOverUnder, pickSide } from "@/lib/scanner";
 import { SPORT_ELO_OPTIONS } from "@/lib/sportConfig";
-import { fitMarginModel, formatSpread, predictMargin, predictTotal, seasonScoringAverage } from "@/lib/spreadModel";
+import {
+  empiricalCoverProbability,
+  empiricalOverProbability,
+  fitMarginModel,
+  formatSpread,
+  historicalTotalResiduals,
+  MIN_RESIDUALS_FOR_EMPIRICAL,
+  predictMargin,
+  predictTotal,
+  residualStdDev,
+  seasonScoringAverage,
+} from "@/lib/spreadModel";
 import { computeTeamStatDiffs, loadTeamStats, NEUTRAL_TEAM_STAT_FEATURES, TeamGameStat } from "@/lib/teamStats";
 import { useLocalStorageState } from "@/lib/useLocalStorageState";
 import { LineChart } from "./LineChart";
@@ -38,6 +52,13 @@ function fmtDate(iso: string): string {
   }
 }
 
+/** This one side's OWN spread number, in the sign it would actually be posted at (e.g. the underdog gets a "+"), given a home-favored-convention line — unlike spreadModel.ts's formatSpread, which always shows whoever's favored. */
+function sideSpreadLabel(homeTeam: string, awayTeam: string, line: number, side: "home" | "away"): string {
+  const teamLine = side === "home" ? -line : line;
+  const team = side === "home" ? homeTeam : awayTeam;
+  return `${team} ${teamLine >= 0 ? "+" : ""}${teamLine.toFixed(1)}`;
+}
+
 export function GameResearch() {
   const router = useRouter();
   const params = useSearchParams();
@@ -51,17 +72,20 @@ export function GameResearch() {
     games: Game[] | null;
     teamStats: TeamGameStat[] | null;
     playerUsage: PlayerUsageRow[];
+    gameContext: Map<string, NflGameContext> | null;
     error: string | null;
-  }>({ dataset: "cfb", games: null, teamStats: null, playerUsage: [], error: null });
+  }>({ dataset: "cfb", games: null, teamStats: null, playerUsage: [], gameContext: null, error: null });
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([loadGames(dataset), loadTeamStats(dataset), loadPlayerUsage(dataset)])
-      .then(([g, ts, pu]) => {
-        if (!cancelled) setFetchResult({ dataset, games: g, teamStats: ts, playerUsage: pu, error: null });
+    // gameContext (per-game starting-QB names) only exists for NFL — see gameContext.ts.
+    const gameContextPromise = dataset === "nfl" ? loadNflGameContext() : Promise.resolve(new Map<string, NflGameContext>());
+    Promise.all([loadGames(dataset), loadTeamStats(dataset), loadPlayerUsage(dataset), gameContextPromise])
+      .then(([g, ts, pu, gc]) => {
+        if (!cancelled) setFetchResult({ dataset, games: g, teamStats: ts, playerUsage: pu, gameContext: gc, error: null });
       })
       .catch((e) => {
-        if (!cancelled) setFetchResult({ dataset, games: null, teamStats: null, playerUsage: [], error: String(e) });
+        if (!cancelled) setFetchResult({ dataset, games: null, teamStats: null, playerUsage: [], gameContext: null, error: String(e) });
       });
     return () => {
       cancelled = true;
@@ -74,6 +98,10 @@ export function GameResearch() {
   const [awayMoneylineInput, setAwayMoneylineInput] = useState("");
   const [spreadInput, setSpreadInput] = useState("");
   const [totalInput, setTotalInput] = useState("");
+  const [spreadHomeOddsInput, setSpreadHomeOddsInput] = useState("-110");
+  const [spreadAwayOddsInput, setSpreadAwayOddsInput] = useState("-110");
+  const [totalOverOddsInput, setTotalOverOddsInput] = useState("-110");
+  const [totalUnderOddsInput, setTotalUnderOddsInput] = useState("-110");
 
   // Keyed by which espnId it resolved for, so a stale result never renders
   // as if it belonged to a different (or absent) game id. Also pre-fills the
@@ -81,14 +109,14 @@ export function GameResearch() {
   // for this matchup — this effect only re-fires when espnId/dataset actually
   // change to a different game, so a user's own edits afterward are never
   // clobbered by a later re-render.
-  const [oddsResult, setOddsResult] = useState<{ espnId: string; odds: GameOdds | null } | null>(null);
+  const [oddsResult, setOddsResult] = useState<{ espnId: string; odds: GameOdds | null; injuries: PlayerInjury[] } | null>(null);
   useEffect(() => {
     if (!espnId) return;
     let cancelled = false;
-    fetchGameOdds(dataset, espnId)
-      .then((fetchedOdds) => {
+    fetchGameSummary(dataset, espnId)
+      .then(({ odds: fetchedOdds, injuries }) => {
         if (cancelled) return;
-        setOddsResult({ espnId, odds: fetchedOdds });
+        setOddsResult({ espnId, odds: fetchedOdds, injuries });
         if (fetchedOdds?.homeMoneyline !== null && fetchedOdds?.homeMoneyline !== undefined) {
           setHomeMoneylineInput(String(fetchedOdds.homeMoneyline));
         }
@@ -100,13 +128,14 @@ export function GameResearch() {
         }
       })
       .catch(() => {
-        if (!cancelled) setOddsResult({ espnId, odds: null });
+        if (!cancelled) setOddsResult({ espnId, odds: null, injuries: [] });
       });
     return () => {
       cancelled = true;
     };
   }, [dataset, espnId]);
   const odds = oddsResult?.espnId === espnId ? oddsResult.odds : null;
+  const injuries = oddsResult?.espnId === espnId ? oddsResult.injuries : [];
 
   const [startingBankroll] = useLocalStorageState("bankroll-tracker:starting", 10000);
   const [bets] = useLocalStorageState<BetEntry[]>("bankroll-tracker:bets", []);
@@ -128,6 +157,7 @@ export function GameResearch() {
   const games = fetchResult.dataset === dataset ? fetchResult.games : null;
   const teamStats = fetchResult.dataset === dataset ? fetchResult.teamStats : null;
   const playerUsage = fetchResult.dataset === dataset ? fetchResult.playerUsage : EMPTY_PLAYER_USAGE;
+  const gameContext = fetchResult.dataset === dataset ? fetchResult.gameContext : null;
   const error = fetchResult.dataset === dataset ? fetchResult.error : null;
   const loading = fetchResult.dataset !== dataset || (games === null && error === null);
 
@@ -141,13 +171,26 @@ export function GameResearch() {
 
     const statDiffs = teamStats ? computeTeamStatDiffs(games, teamStats) : new Map();
     const hasTeamStats = statDiffs.size > 0;
-    const statFeaturesFor = (r: { gameId?: string }) => (r.gameId && statDiffs.get(r.gameId)) || NEUTRAL_TEAM_STAT_FEATURES;
-    const featuresFor = (r: (typeof records)[number]) => {
-      const base = [r.eloDiff];
-      if (!hasTeamStats) return base;
-      const f = statFeaturesFor(r);
-      return [...base, f.totalYardsDiff, f.turnoverMarginDiff, f.offEpaDiff];
+
+    // Starting-QB value (walk-forward, no-leakage) — validated by held-out
+    // Brier-score backtesting (see qbValue.ts's doc comment) before being
+    // wired in here. NFL-only: depends on gameContext.ts's per-game
+    // starting-QB names, which only nflverse's archive carries.
+    const qbModel = dataset === "nfl" ? buildQbValueModel(games, playerUsage) : null;
+    const hasQbValue = dataset === "nfl" && !!gameContext && gameContext.size > 0 && !!qbModel;
+    const qbValueFor = (r: { gameId?: string; date: string }) => {
+      if (!qbModel || !r.gameId || !gameContext) return null;
+      const ctx = gameContext.get(r.gameId);
+      if (!ctx) return null;
+      return qbValueDiff(qbModel, ctx.homeQbName, ctx.awayQbName, r.date);
     };
+
+    const featuresFor = (r: (typeof records)[number]) =>
+      buildFeatureVector(
+        { eloDiff: r.eloDiff, teamStats: r.gameId ? (statDiffs.get(r.gameId) ?? null) : null, qbValue: qbValueFor(r) },
+        hasTeamStats,
+        hasQbValue,
+      );
 
     const model = trainLogisticRegression(
       records.map(featuresFor),
@@ -160,7 +203,7 @@ export function GameResearch() {
     const eloDiff = homeElo + eloOptions.homeAdvantage - awayElo;
 
     const currentSeason = games[games.length - 1].season;
-    let statFeatures = NEUTRAL_TEAM_STAT_FEATURES;
+    let statFeatures: typeof NEUTRAL_TEAM_STAT_FEATURES | null = null;
     if (hasTeamStats && teamStats) {
       const homeAvg = seasonAverage(teamStatTrend(games, teamStats, home), currentSeason);
       const awayAvg = seasonAverage(teamStatTrend(games, teamStats, away), currentSeason);
@@ -173,27 +216,61 @@ export function GameResearch() {
       }
     }
 
-    const fullFeatures = hasTeamStats
-      ? [eloDiff, statFeatures.totalYardsDiff, statFeatures.turnoverMarginDiff, statFeatures.offEpaDiff]
-      : [eloDiff];
+    // Live QB value: today's presumed starters (this season's usage leader
+    // in passing for each team), valued as of today — UNLESS that presumed
+    // starter shows up on ESPN's live injury report (fetched alongside odds
+    // when this page is opened from a live game) with a status severe
+    // enough to assume they won't play, in which case the season's #2
+    // passing-usage leader is used instead. This still can't catch a change
+    // ESPN hasn't reported yet, but it closes the gap for anything already
+    // flagged — better than blindly trusting a hurt starter's rating.
+    let liveQbValue: ReturnType<typeof qbValueDiff> = null;
+    let liveHomeQb: string | null = null;
+    let liveAwayQb: string | null = null;
+    let homeQbInjuryNote: string | null = null;
+    let awayQbInjuryNote: string | null = null;
+    if (hasQbValue && qbModel) {
+      const homeResolved = resolveLiveStarter(playerUsage, games, home, currentSeason, injuries);
+      const awayResolved = resolveLiveStarter(playerUsage, games, away, currentSeason, injuries);
+      liveHomeQb = homeResolved.player;
+      liveAwayQb = awayResolved.player;
+      homeQbInjuryNote = homeResolved.note;
+      awayQbInjuryNote = awayResolved.note;
+      liveQbValue = qbValueDiff(qbModel, liveHomeQb, liveAwayQb, new Date().toISOString().slice(0, 10));
+    }
+
+    const fullFeatures = buildFeatureVector({ eloDiff, teamStats: statFeatures, qbValue: liveQbValue }, hasTeamStats, hasQbValue);
     const pHome = predictProba(model, fullFeatures);
     // Elo-alone probability, holding every other feature at neutral (0) — isolates how much of
-    // the final number came from Elo vs. the added team-stat features.
+    // the final number came from Elo vs. the added team-stat/QB-value features.
     const pEloOnly = sigmoid(model.bias + model.weights[0] * eloDiff);
+    // Elo + team stats, but before QB value — isolates QB value's own contribution, same idea as pEloOnly.
+    const pBeforeQb = hasQbValue
+      ? predictProba(model, buildFeatureVector({ eloDiff, teamStats: statFeatures, qbValue: null }, hasTeamStats, false))
+      : pHome;
 
     const h2h = headToHead(games, home, away);
     const h2hRecordHome = headToHeadRecord(h2h, home);
 
     const recentGames = (history: typeof homeHistory) => [...history].reverse().slice(0, RECENT_GAMES_SHOWN);
 
-    // Informational only — see spreadModel.ts for the honest accuracy numbers
-    // behind these (measured against real historical market lines). Neither
-    // has a cover-probability/edge calculation attached, unlike the moneyline
-    // pick above.
-    const predictedMargin = predictMargin(fitMarginModel(records), eloDiff);
+    // See spreadModel.ts for the honest accuracy numbers behind these
+    // (measured against real historical market lines). The residuals below
+    // (actual vs. predicted, walk-forward for totals) are what let the
+    // spread/total check further down turn these into a real cover/over
+    // probability instead of just a bare number.
+    const marginModel = fitMarginModel(records);
+    const predictedMargin = predictMargin(marginModel, eloDiff);
+    const marginPredictedActual = records.map((r) => ({ predicted: predictMargin(marginModel, r.eloDiff), actual: r.margin }));
+    const marginResiduals = marginPredictedActual.map((r) => r.actual - r.predicted);
+    const marginSigma = residualStdDev(marginPredictedActual);
+
     const homeScoringAvg = seasonScoringAverage(homeHistory, currentSeason);
     const awayScoringAvg = seasonScoringAverage(awayHistory, currentSeason);
     const predictedTotal = homeScoringAvg && awayScoringAvg ? predictTotal(homeScoringAvg, awayScoringAvg) : null;
+    const totalResidualPairs = historicalTotalResiduals(games);
+    const totalResiduals = totalResidualPairs.map((r) => r.actual - r.predicted);
+    const totalSigma = residualStdDev(totalResidualPairs);
 
     // Who's actually been playing, from real box scores — context for a
     // human to weigh, not a model feature (see playerUsage.ts for why).
@@ -231,8 +308,15 @@ export function GameResearch() {
       eloDiff,
       pHome,
       pEloOnly,
+      pBeforeQb,
       hasTeamStats,
       statFeatures,
+      hasQbValue,
+      liveHomeQb,
+      liveAwayQb,
+      liveQbValue,
+      homeQbInjuryNote,
+      awayQbInjuryNote,
       homeHistory,
       awayHistory,
       recentHome: recentGames(homeHistory),
@@ -249,9 +333,13 @@ export function GameResearch() {
       homeStatTrend: hasTeamStats && teamStats ? teamStatTrend(games, teamStats, home) : [],
       awayStatTrend: hasTeamStats && teamStats ? teamStatTrend(games, teamStats, away) : [],
       predictedMargin,
+      marginResiduals,
+      marginSigma,
       predictedTotal,
+      totalResiduals,
+      totalSigma,
     };
-  }, [games, teamStats, playerUsage, home, away, dataset]);
+  }, [games, teamStats, playerUsage, gameContext, injuries, home, away, dataset]);
 
   // The exact same pick/classify pipeline as This Week, but for whatever
   // odds are typed in above — so any matchup you can research is also one
@@ -265,6 +353,35 @@ export function GameResearch() {
     const classification = classifyPick(pick, effectiveBankroll, fractionalMultiplier);
     return { pick, classification };
   }, [analysis, homeMoneylineInput, awayMoneylineInput, home, away, effectiveBankroll, fractionalMultiplier]);
+
+  // Same idea as betCheck, for the spread — using the empirical (conformal-
+  // style) cover probability from real held-out residuals rather than a
+  // Normal-distribution assumption, so this now gets a genuine Kelly-sized
+  // recommendation instead of just an "informational" number. Both sides
+  // default to standard -110 juice, editable if you have the real book price.
+  const spreadCheck = useMemo(() => {
+    if (!analysis) return null;
+    const line = parseFloat(spreadInput);
+    if (Number.isNaN(line)) return null;
+    const homeOdds = parseMoneyline(spreadHomeOddsInput) ?? -110;
+    const awayOdds = parseMoneyline(spreadAwayOddsInput) ?? -110;
+    const pHomeCovers = empiricalCoverProbability(analysis.predictedMargin, line, analysis.marginResiduals, analysis.marginSigma);
+    const pick = pickOverUnder(pHomeCovers, homeOdds, awayOdds); // "over" = home covers, "under" = away covers
+    const classification = classifyPick(pick, effectiveBankroll, fractionalMultiplier);
+    return { pick, classification, pHomeCovers, usedEmpirical: analysis.marginResiduals.length >= MIN_RESIDUALS_FOR_EMPIRICAL };
+  }, [analysis, spreadInput, spreadHomeOddsInput, spreadAwayOddsInput, effectiveBankroll, fractionalMultiplier]);
+
+  const totalCheck = useMemo(() => {
+    if (!analysis || analysis.predictedTotal === null) return null;
+    const line = parseFloat(totalInput);
+    if (Number.isNaN(line)) return null;
+    const overOdds = parseMoneyline(totalOverOddsInput) ?? -110;
+    const underOdds = parseMoneyline(totalUnderOddsInput) ?? -110;
+    const pOver = empiricalOverProbability(analysis.predictedTotal, line, analysis.totalResiduals, analysis.totalSigma);
+    const pick = pickOverUnder(pOver, overOdds, underOdds);
+    const classification = classifyPick(pick, effectiveBankroll, fractionalMultiplier);
+    return { pick, classification, pOver, usedEmpirical: analysis.totalResiduals.length >= MIN_RESIDUALS_FOR_EMPIRICAL };
+  }, [analysis, totalInput, totalOverOddsInput, totalUnderOddsInput, effectiveBankroll, fractionalMultiplier]);
 
   const teamOptions = useMemo(() => {
     if (!games) return [];
@@ -449,16 +566,44 @@ export function GameResearch() {
                 <>
                   {" "}
                   Adding this season&apos;s total yards, turnover margin, and offensive efficiency moves that to{" "}
-                  <strong style={{ color: "var(--text-secondary)" }}>{(analysis.pHome * 100).toFixed(0)}%</strong> — a{" "}
-                  {Math.abs(analysis.pHome - analysis.pEloOnly) * 100 < 0.5
+                  <strong style={{ color: "var(--text-secondary)" }}>
+                    {((analysis.hasQbValue ? analysis.pBeforeQb : analysis.pHome) * 100).toFixed(0)}%
+                  </strong>{" "}
+                  — a{" "}
+                  {Math.abs((analysis.hasQbValue ? analysis.pBeforeQb : analysis.pHome) - analysis.pEloOnly) * 100 < 0.5
                     ? "negligible"
-                    : `${((analysis.pHome - analysis.pEloOnly) * 100).toFixed(1)}-point`}{" "}
+                    : `${(((analysis.hasQbValue ? analysis.pBeforeQb : analysis.pHome) - analysis.pEloOnly) * 100).toFixed(1)}-point`}{" "}
                   swing from those extra stats alone.
                 </>
+              )}
+              {analysis.hasQbValue && analysis.liveHomeQb && analysis.liveAwayQb && (
+                <>
+                  {" "}
+                  Factoring in the presumed starters —{" "}
+                  <strong style={{ color: "var(--text-secondary)" }}>{analysis.liveHomeQb}</strong> vs.{" "}
+                  <strong style={{ color: "var(--text-secondary)" }}>{analysis.liveAwayQb}</strong> — moves it to{" "}
+                  <strong style={{ color: "var(--text-secondary)" }}>{(analysis.pHome * 100).toFixed(0)}%</strong>, based on
+                  each QB&apos;s season-to-date efficiency (never using games not yet played).
+                </>
               )}{" "}
-              This is the same Elo + logistic regression model as the Probability Model tab — no injuries,
-              weather, or lineup news factored in.
+              This is the same Elo + logistic regression model behind{" "}
+              <Link href="/model" className="underline" style={{ color: "var(--series-1)" }}>
+                the full calibration backtest
+              </Link>{" "}
+              — no weather factored in, and presumed starters come from this season&apos;s usage data
+              cross-checked against ESPN&apos;s live injury report (only available once this page is opened
+              from a live game) — a change neither has caught yet won&apos;t be reflected.
             </p>
+            {(analysis.homeQbInjuryNote || analysis.awayQbInjuryNote) && (
+              <p
+                className="mt-2 rounded-md border px-2 py-1.5 text-xs"
+                style={{ borderColor: "var(--status-critical)", color: "var(--status-critical)" }}
+              >
+                {analysis.homeQbInjuryNote && <>{analysis.homeQbInjuryNote}</>}
+                {analysis.homeQbInjuryNote && analysis.awayQbInjuryNote && <br />}
+                {analysis.awayQbInjuryNote && <>{analysis.awayQbInjuryNote}</>}
+              </p>
+            )}
             {(analysis.homeOffDef || analysis.awayOffDef) && (
               <p className="mt-2 text-xs" style={{ color: "var(--text-muted)" }}>
                 <strong style={{ color: "var(--text-secondary)" }}>Season rank (opponent-adjusted):</strong>{" "}
@@ -487,7 +632,7 @@ export function GameResearch() {
             <p className="mb-3 text-xs" style={{ color: "var(--text-muted)" }}>
               {odds
                 ? `Pre-filled from live odds via ${odds.provider} — edit any of these if you found a better number elsewhere, or if you're checking a hypothetical line.`
-                : "Type in the moneyline for each side (from any sportsbook) to run this matchup through the same check as This Week — spread and total are just for your own reference and aren't used in the calculation below."}
+                : "Type in the moneyline for each side (from any sportsbook) to run this matchup through the same check as This Week. Add a spread and/or total line below to check those too — each gets its own real cover/over probability now, not just a bare number."}
             </p>
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
               <label className="flex flex-col gap-1 text-sm">
@@ -515,10 +660,11 @@ export function GameResearch() {
                 />
               </label>
               <label className="flex flex-col gap-1 text-sm">
-                <span style={{ color: "var(--text-secondary)" }}>Spread (reference)</span>
+                <span style={{ color: "var(--text-secondary)" }}>Spread ({home}, home-favored convention)</span>
                 <input
                   type="text"
-                  placeholder={`e.g. ${home} -3.5`}
+                  inputMode="decimal"
+                  placeholder={`e.g. 3.5 (${home} favored by 3.5)`}
                   value={spreadInput}
                   onChange={(e) => setSpreadInput(e.target.value)}
                   className="rounded-md border px-2 py-1.5 tabular-nums"
@@ -526,12 +672,61 @@ export function GameResearch() {
                 />
               </label>
               <label className="flex flex-col gap-1 text-sm">
-                <span style={{ color: "var(--text-secondary)" }}>Total / O-U (reference)</span>
+                <span style={{ color: "var(--text-secondary)" }}>Total / O-U line</span>
                 <input
                   type="text"
+                  inputMode="decimal"
                   placeholder="e.g. 44.5"
                   value={totalInput}
                   onChange={(e) => setTotalInput(e.target.value)}
+                  className="rounded-md border px-2 py-1.5 tabular-nums"
+                  style={{ borderColor: "var(--card-border)", color: "var(--text-primary)", background: "var(--card-bg)" }}
+                />
+              </label>
+              <label className="flex flex-col gap-1 text-sm">
+                <span style={{ color: "var(--text-secondary)" }}>{away} spread odds</span>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  placeholder="-110"
+                  value={spreadAwayOddsInput}
+                  onChange={(e) => setSpreadAwayOddsInput(e.target.value)}
+                  className="rounded-md border px-2 py-1.5 tabular-nums"
+                  style={{ borderColor: "var(--card-border)", color: "var(--text-primary)", background: "var(--card-bg)" }}
+                />
+              </label>
+              <label className="flex flex-col gap-1 text-sm">
+                <span style={{ color: "var(--text-secondary)" }}>{home} spread odds</span>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  placeholder="-110"
+                  value={spreadHomeOddsInput}
+                  onChange={(e) => setSpreadHomeOddsInput(e.target.value)}
+                  className="rounded-md border px-2 py-1.5 tabular-nums"
+                  style={{ borderColor: "var(--card-border)", color: "var(--text-primary)", background: "var(--card-bg)" }}
+                />
+              </label>
+              <label className="flex flex-col gap-1 text-sm">
+                <span style={{ color: "var(--text-secondary)" }}>Over odds</span>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  placeholder="-110"
+                  value={totalOverOddsInput}
+                  onChange={(e) => setTotalOverOddsInput(e.target.value)}
+                  className="rounded-md border px-2 py-1.5 tabular-nums"
+                  style={{ borderColor: "var(--card-border)", color: "var(--text-primary)", background: "var(--card-bg)" }}
+                />
+              </label>
+              <label className="flex flex-col gap-1 text-sm">
+                <span style={{ color: "var(--text-secondary)" }}>Under odds</span>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  placeholder="-110"
+                  value={totalUnderOddsInput}
+                  onChange={(e) => setTotalUnderOddsInput(e.target.value)}
                   className="rounded-md border px-2 py-1.5 tabular-nums"
                   style={{ borderColor: "var(--card-border)", color: "var(--text-primary)", background: "var(--card-bg)" }}
                 />
@@ -541,11 +736,12 @@ export function GameResearch() {
             <p className="mt-2 text-xs" style={{ color: "var(--text-muted)" }}>
               <strong style={{ color: "var(--text-secondary)" }}>Model implies:</strong>{" "}
               {formatSpread(home, away, analysis.predictedMargin)}
-              {analysis.predictedTotal !== null && <> · O/U {analysis.predictedTotal.toFixed(1)}</>} — informational
-              only, not a bet recommendation. Checked against real historical market lines, this kind of
-              spread estimate runs ~8 points off the real number on average (sometimes much more), while the
-              total estimate runs ~4 points off. Treat the total as a rough-but-useful guide and the spread as
-              context at best, not a substitute for an actual line.
+              {analysis.predictedTotal !== null && <> · O/U {analysis.predictedTotal.toFixed(1)}</>}. This point
+              estimate alone runs ~8 spread points / ~4 total points off the real market number on average
+              (sometimes much more) — the cover/over check below doesn&apos;t pretend otherwise: it asks how far
+              the LINE sits from the model&apos;s whole spread of likely outcomes (from real historical{" "}
+              {analysis.marginResiduals.length >= MIN_RESIDUALS_FOR_EMPIRICAL ? "outcomes, not a bell-curve assumption" : "residuals"}
+              ), so it only shows a real edge when the gap is large enough to survive that uncertainty.
             </p>
 
             <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -632,6 +828,90 @@ export function GameResearch() {
                     p: (betCheck.pick.summary.p * 100).toFixed(1),
                     b: betCheck.pick.b.toFixed(4),
                     stake: betCheck.classification.stake.toFixed(0),
+                  }).toString()}`}
+                  className="mt-3 inline-block rounded-md px-3 py-1.5 text-xs font-medium text-white"
+                  style={{ background: "var(--series-1)" }}
+                >
+                  Log this bet in the Tracker →
+                </Link>
+              </div>
+            )}
+
+            {spreadCheck && spreadCheck.classification.status === "no-edge" && (
+              <p className="mt-3 text-sm" style={{ color: "var(--text-secondary)" }}>
+                Spread: no edge at these odds ({(spreadCheck.pHomeCovers * 100).toFixed(0)}% {home} covers).
+              </p>
+            )}
+            {spreadCheck && spreadCheck.classification.status === "flagged" && (
+              <div className="mt-3 rounded-lg border px-4 py-3 text-sm" style={{ borderColor: "var(--status-critical)", color: "var(--status-critical)" }}>
+                <strong>Spread flagged, not a recommendation.</strong> The model and the market disagree by more
+                than the trust threshold — see the moneyline explanation above; same logic applies here.
+              </div>
+            )}
+            {spreadCheck && spreadCheck.classification.status === "edge" && (
+              <div className="mt-3 rounded-lg border p-4" style={{ borderColor: "var(--status-good)" }}>
+                <span className="inline-block rounded-full px-3 py-1 text-xs font-semibold text-white" style={{ background: "var(--status-good)" }}>
+                  BET {sideSpreadLabel(home, away, parseFloat(spreadInput), spreadCheck.pick.side === "over" ? "home" : "away")}
+                </span>
+                <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  <StatTile label="Model prob." value={`${(spreadCheck.pick.summary.p * 100).toFixed(1)}%`} sub={spreadCheck.usedEmpirical ? "empirical" : "Normal (small sample)"} />
+                  <StatTile label="Market implied" value={`${(spreadCheck.pick.marketImplied * 100).toFixed(1)}%`} sub="includes vig" />
+                  <StatTile label="Expected value" value={`+${(spreadCheck.pick.summary.expectancy * 100).toFixed(1)}%`} accent="good" />
+                  <StatTile label="Recommended stake" value={currency(spreadCheck.classification.stake)} />
+                </div>
+                <Link
+                  href={`/tracker?${new URLSearchParams({
+                    desc: `${spreadCheck.pick.side === "over" ? home : away} spread (${formatMoneyline(spreadCheck.pick.side === "over" ? parseMoneyline(spreadHomeOddsInput) ?? -110 : parseMoneyline(spreadAwayOddsInput) ?? -110)}) — ${away} @ ${home}`,
+                    p: (spreadCheck.pick.summary.p * 100).toFixed(1),
+                    b: spreadCheck.pick.b.toFixed(4),
+                    stake: spreadCheck.classification.stake.toFixed(0),
+                    homeTeam: home,
+                    awayTeam: away,
+                    betType: "spread",
+                    line: spreadInput,
+                    side: spreadCheck.pick.side === "over" ? "home" : "away",
+                  }).toString()}`}
+                  className="mt-3 inline-block rounded-md px-3 py-1.5 text-xs font-medium text-white"
+                  style={{ background: "var(--series-1)" }}
+                >
+                  Log this bet in the Tracker →
+                </Link>
+              </div>
+            )}
+
+            {totalCheck && totalCheck.classification.status === "no-edge" && (
+              <p className="mt-3 text-sm" style={{ color: "var(--text-secondary)" }}>
+                Total: no edge at these odds ({(totalCheck.pOver * 100).toFixed(0)}% over).
+              </p>
+            )}
+            {totalCheck && totalCheck.classification.status === "flagged" && (
+              <div className="mt-3 rounded-lg border px-4 py-3 text-sm" style={{ borderColor: "var(--status-critical)", color: "var(--status-critical)" }}>
+                <strong>Total flagged, not a recommendation.</strong> The model and the market disagree by more
+                than the trust threshold — see the moneyline explanation above; same logic applies here.
+              </div>
+            )}
+            {totalCheck && totalCheck.classification.status === "edge" && (
+              <div className="mt-3 rounded-lg border p-4" style={{ borderColor: "var(--status-good)" }}>
+                <span className="inline-block rounded-full px-3 py-1 text-xs font-semibold text-white" style={{ background: "var(--status-good)" }}>
+                  BET {totalCheck.pick.side.toUpperCase()} {totalInput}
+                </span>
+                <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  <StatTile label="Model prob." value={`${(totalCheck.pick.summary.p * 100).toFixed(1)}%`} sub={totalCheck.usedEmpirical ? "empirical, walk-forward" : "Normal (small sample)"} />
+                  <StatTile label="Market implied" value={`${(totalCheck.pick.marketImplied * 100).toFixed(1)}%`} sub="includes vig" />
+                  <StatTile label="Expected value" value={`+${(totalCheck.pick.summary.expectancy * 100).toFixed(1)}%`} accent="good" />
+                  <StatTile label="Recommended stake" value={currency(totalCheck.classification.stake)} />
+                </div>
+                <Link
+                  href={`/tracker?${new URLSearchParams({
+                    desc: `${totalCheck.pick.side.toUpperCase()} ${totalInput} (${formatMoneyline(totalCheck.pick.side === "over" ? parseMoneyline(totalOverOddsInput) ?? -110 : parseMoneyline(totalUnderOddsInput) ?? -110)}) — ${away} @ ${home}`,
+                    p: (totalCheck.pick.summary.p * 100).toFixed(1),
+                    b: totalCheck.pick.b.toFixed(4),
+                    stake: totalCheck.classification.stake.toFixed(0),
+                    homeTeam: home,
+                    awayTeam: away,
+                    betType: "total",
+                    line: totalInput,
+                    side: totalCheck.pick.side,
                   }).toString()}`}
                   className="mt-3 inline-block rounded-md px-3 py-1.5 text-xs font-medium text-white"
                   style={{ background: "var(--series-1)" }}
