@@ -354,8 +354,9 @@ async function prepareCfbMarketOdds() {
     const csvText = zlib.gunzipSync(gz).toString("utf-8");
     rows = toObjects(parseCsv(csvText));
   } catch (e) {
-    console.log(`  skipping (failed to fetch/parse: ${e})`);
-    return { schema: MARKET_ODDS_SCHEMA, rows: [] };
+    const existing = await readExistingRows("cfb-market-odds.json");
+    console.log(`  fetch/parse failed (${e}) — keeping the ${existing.length} rows already on file rather than wiping them out`);
+    return { schema: MARKET_ODDS_SCHEMA, rows: existing };
   }
 
   const byGame = new Map(); // gameId -> { home: {sum, count}, away: {sum, count} }
@@ -436,8 +437,9 @@ async function prepareCfbSpreadTotalLines() {
     const csvText = zlib.gunzipSync(gz).toString("utf-8");
     rows = toObjects(parseCsv(csvText));
   } catch (e) {
-    console.log(`  skipping (failed to fetch/parse: ${e})`);
-    return { schema: CFB_MARKET_LINES_SCHEMA, rows: [] };
+    const existing = await readExistingRows("cfb-market-lines.json");
+    console.log(`  fetch/parse failed (${e}) — keeping the ${existing.length} rows already on file rather than wiping them out`);
+    return { schema: CFB_MARKET_LINES_SCHEMA, rows: existing };
   }
 
   const avg = () => ({ sum: 0, count: 0 });

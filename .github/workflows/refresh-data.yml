@@ -6,6 +6,11 @@ name: Refresh game data
 # and pushes only if something actually changed — a push to main is what
 # triggers Netlify's existing continuous deployment, so a successful refresh
 # here goes live on its own, no further action needed.
+#
+# Uses a CFBD_API_KEY repository secret (a free key from
+# https://collegefootballdata.com) to pull real CFB EPA — if the secret is
+# ever removed, the script degrades gracefully (offEpa stays 0) rather than
+# failing the run.
 
 on:
   schedule:
@@ -34,6 +39,8 @@ jobs:
         run: npm ci
 
       - name: Regenerate data
+        env:
+          CFBD_API_KEY: ${{ secrets.CFBD_API_KEY }}
         run: node scripts/prepare-data.mjs | tee /tmp/refresh-log.txt
 
       - name: Run tests
