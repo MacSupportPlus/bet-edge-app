@@ -281,20 +281,46 @@ export interface UpcomingSchedule {
   currentWeek: number | null;
 }
 
-/** Upcoming games from today through `daysAhead` days out, plus the current week number. `groups=80` (FBS) only applies to CFB — NFL has no such split. */
+/**
+ * Upcoming games from today through `daysAhead` days out, plus the current
+ * week number. `groups=80` (FBS) only applies to CFB — NFL has no such
+ * split.
+ *
+ * One request PER DAY, not a single `dates=START-END` range request — ESPN
+ * broke the range form of this query sometime after 2026-09-12 (verified
+ * live: any range, even a trivial same-day one, now returns
+ * `400 "Failed to get events endpoint."`, while a single `dates=YYYYMMDD`
+ * still works fine). Concurrency-limited since `daysAhead` days means that
+ * many separate requests instead of one.
+ */
 export async function fetchUpcomingGames(sport: Sport, daysAhead = 8): Promise<UpcomingSchedule> {
-  const today = new Date();
-  const end = new Date(today);
-  end.setDate(end.getDate() + daysAhead);
   const groupParam = sport === "cfb" ? "&groups=80" : "";
-  const url = `${scoreboardUrl(sport)}?limit=400${groupParam}&dates=${toEspnDate(today)}-${toEspnDate(end)}`;
+  const today = new Date();
+  const days = Array.from({ length: daysAhead + 1 }, (_, i) => {
+    const d = new Date(today);
+    d.setDate(d.getDate() + i);
+    return d;
+  });
 
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`ESPN scoreboard request failed: ${res.status}`);
-  const data = await res.json();
-  const events: unknown[] = Array.isArray(data.events) ? data.events : [];
-  const games = events.map(parseScoreboardEvent).filter((g): g is UpcomingGame => g !== null);
-  const currentWeek = typeof data.week?.number === "number" ? data.week.number : null;
+  const perDay = await mapWithConcurrency(days, 5, async (day) => {
+    const res = await fetch(`${scoreboardUrl(sport)}?limit=400${groupParam}&dates=${toEspnDate(day)}`);
+    if (!res.ok) throw new Error(`ESPN scoreboard request failed: ${res.status}`);
+    return res.json();
+  });
+
+  const seen = new Set<string>();
+  const games: UpcomingGame[] = [];
+  let currentWeek: number | null = null;
+  for (const data of perDay) {
+    if (currentWeek === null && typeof data.week?.number === "number") currentWeek = data.week.number;
+    const events: unknown[] = Array.isArray(data.events) ? data.events : [];
+    for (const raw of events) {
+      const g = parseScoreboardEvent(raw);
+      if (!g || seen.has(g.espnId)) continue; // a game spanning a UTC day boundary could otherwise appear on two days
+      seen.add(g.espnId);
+      games.push(g);
+    }
+  }
   return { games, currentWeek };
 }
 
