@@ -1,11 +1,25 @@
-# Bet App
+# Edge Calculator
 
-A personal, fully static NFL/college football research and bankroll tool,
-grounded in five formulas from quantitative betting theory — **expectancy**,
-**volatility**, **risk of ruin**, the **Kelly criterion**, and **geometric
-(compounded) growth** vs. naive ensemble-average growth — and built on a real,
-walk-forward-validated Elo/logistic-regression win-probability model, not a
-re-derivation of the market's own line.
+**Live app:** https://bet-edge-app.netlify.app
+
+A sports analytics tool for NFL and college football that answers one question honestly: *is this price actually good?* It compares a home-built win-probability model against live sportsbook odds, sizes every edge with the Kelly criterion, and shows what that does to a bankroll over time.
+
+![This Week's Edges: model probability vs. market probability, expected value, and recommended stake](docs/screenshot.jpg)
+
+## Highlights
+
+- **Its own model, not the market's.** Elo ratings, team-stat features, and a starting-QB signal feed a logistic regression written from scratch with no ML library. It is trained on the oldest 80% of games and scored only on the newest 20% it never saw.
+- **Measured, not claimed.** Brier score, a calibration chart, and a walk-forward backtest (flat vs. full Kelly vs. half Kelly) are shown in the app itself.
+- **Built-in skepticism.** When the model disagrees with a real sportsbook by too much, the pick is flagged as a likely model blind spot instead of shown as "free money."
+- **Honest growth math.** It shows the real compounding rate `g = μ − σ²/2` next to the average return, and defaults to half-Kelly because real probability estimates carry error.
+- **Trends that count the vig.** Every trend is measured against the real closing line and needs 30+ games before it is marked trusted, which shuts down the usual cherry-picking.
+- **$0 to host.** A static Next.js export on Netlify, with data refreshed by scheduled GitHub Actions. 358 unit tests cover every math and data module.
+
+**Stack:** Next.js · TypeScript · Tailwind · Vitest · GitHub Actions · Netlify · nflverse / cfbfastR data · The Odds API
+
+Built by [Jason McElvain](https://github.com/MacSupportPlus). For research and education, not betting advice. If gambling stops being fun, call 1-800-GAMBLER.
+
+---
 
 ## Core idea
 
@@ -201,11 +215,11 @@ Next.js (App Router, static export — `output: "export"`) + TypeScript +
 Tailwind CSS. Every model, simulation, and backtest runs entirely
 client-side — `public/data/*.json` is fetched once and everything else (Elo,
 regression, calibration, backtesting, trend math) happens in the browser.
-Live odds/props come from The Odds API (paid, low-volume tier) and ESPN's
-public unofficial API (free, CORS-open); both are fetched directly from the
-browser, no backend needed. GitHub Actions workflows
-(`.github/workflows/`) refresh the historical archive daily and live odds
-every 2 hours.
+Live odds and props come from The Odds API (paid, low-volume tier). They are
+fetched on a schedule by GitHub Actions (`.github/workflows/`), with the API key
+stored as an encrypted repository secret, and written to static JSON, so the key
+never reaches the browser. Injury reports come from ESPN's public API, fetched in
+the browser. The historical archive refreshes daily and live odds every 2 hours.
 
 Testing: [Vitest](https://vitest.dev) for every pure-math/data module — 358
 tests as of this writing, one test file per lib module, no component tests
